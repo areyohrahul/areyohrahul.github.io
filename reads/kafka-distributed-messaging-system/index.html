@@ -78,6 +78,7 @@
 <p>Messages are sent to random partitions or to a specific partition based on a key. The key is used to ensure that messages with the same key are always sent to the same partition, which is important for maintaining order for those messages.</p>
 <p>To consume messages, consumers are grouped into what’s called a consumer group. Each consumer in the group reads from a subset of the topic's partitions, allowing parallel processing. Multiple consumer groups can independently consume the same topic—for example, both a search ingestion system and an ad analytics system might consume the same page view events.</p>
 <p>Each topic is split into multiple partitions, which helps distribute load and increase parallelism. These partitions are also replicated across different brokers to ensure fault tolerance and high availability.</p>
+<hr />
 <h2>Efficiency on a single partition</h2>
 <h3>Simple storage</h3>
 <p>Each partition is divided into multiple files of almost the same size. New messages are appended to the current file. These messages are buffered in memory and are flushed in batches for better efficiency.</p>
