@@ -4,7 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Kafka: a Distributed Messaging System for Log Processing</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css" />
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"></noscript>
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
     <script>
       window.dataLayer = window.dataLayer || [];
@@ -59,8 +60,8 @@
         <p>Read the complete research paper <a href="https://drive.google.com/file/d/1p-j0V1b2lJdL2ikPLzMg11z1P1hlzwFa/view?usp=sharing">here</a></p>
 <hr />
 <h2>Introduction</h2>
-<p>Kafka is a distributed messaging system. It's design is inspired by existing messaging systems. It has a few unconventional design choices that makes it super efficient.</p>
-<p>It is suitable for both online and offline data consumption. At the time of publishing this research paper, Kafka was already been used by Linkedin for about 6 months.</p>
+<p>Kafka is a distributed messaging system, designed with inspiration from traditional messaging platforms. However, it introduces a few unconventional design choices that make it exceptionally efficient.</p>
+<p>Kafka is well-suited for both online and offline data consumption. At the time this research paper was published, LinkedIn had already been using Kafka in production for about six months.</p>
 <hr />
 <h2>Related work</h2>
 <p>Traditional messaging systems have existed for a long time but they are not quite suitable for log processing. </p>
@@ -86,7 +87,7 @@
 <p>Producers can send multiple messages in a single request. Consumers can also read multiple messages in a single fetch request.</p>
 <p>No external cache is used to store the messages. Kafka relies on the <a href="/blogs/page-cache/index.html">OS page cache</a>. This has the main advantage of avoiding double-buffering. This has the additional benefit of retaining warm cache even when a broker process is restarted. This also avoids the garbage collection cost.</p>
 <p>Kafka also uses the concept of <strong>zero copy</strong>. Sending bytes from a local file to a remote socket typically involves four data copies and two system calls: reading from disk to the page cache, copying to an app buffer, then to a kernel buffer, and finally sending to the socket. Linux's <code>sendfile</code> API reduces this overhead by eliminating two copies and one system call, enabling direct transfer from file to socket. </p>
-<h3>Stateless broker:</h3>
+<h3>Stateless broker</h3>
 <p>Unlike most messaging systems, Kafka lets consumers track their own consumption progress instead of relying on the broker. This design simplifies the broker and reduces its overhead.</p>
 <hr />
 <h2>Distributed Coordination</h2>
