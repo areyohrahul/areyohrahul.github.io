@@ -67,7 +67,7 @@
 <p>Traditional messaging systems have existed for a long time but they are not quite suitable for log processing. </p>
 <ul>
 <li>They provide reliable delivery semantics but they are not suitable for systems where losing some messages (like page views) is acceptable.</li>
-<li>They also not focus on throughput as the core design goal. Example, JMS has no API to allow the producer to batch multiple messaged into a single request. This means each message will incur a complete TCP/IP roundtrip.</li>
+<li>They also not focus on throughput as the core design goal. Example, JMS has no API to allow the producer to batch multiple messages into a single request. This means each message will incur a complete TCP/IP roundtrip.</li>
 <li>They are weak in distributed support. There is no easy way to partition the messages and store them in different machines.</li>
 <li>They assume near immediate consumption of messages. Their performance starts to degrade as the messages grow.</li>
 </ul>
@@ -90,21 +90,22 @@
 <h3>Stateless broker</h3>
 <p>Unlike most messaging systems, Kafka lets consumers track their own consumption progress instead of relying on the broker. This design simplifies the broker and reduces its overhead.</p>
 <hr />
-<h2>Distributed Coordination</h2>
+<h2>Distributed coordination</h2>
 <p>Each partition of a topic is the smallest unit of parallelism. This means that at any given time, all messages from one partition are consumed only by a single consumer within each consumer group.</p>
-<p>There is no master node. Consumers coordinate among themselves in a decentralized fashion. This is facilitate by a highly available consensus service called Zookeeper.</p>
+<p>There is no master node. Consumers coordinate among themselves in a decentralized fashion. This is facilitated by a highly available consensus service called Zookeeper.</p>
 <p>Kafka uses Zookeeper for the following tasks:</p>
 <ul>
 <li>Detecting the addition and the removal of brokers and consumers.</li>
-<li>Triggering a rebalance process in each consumer when the above events happen.</li>
+<li>Triggering a re-balance process in each consumer when the above events happen.</li>
 <li>Maintaining the consumption relationship and keeping track of the consumed offset of each partition.</li>
 </ul>
 <hr />
-<h2>Delivery Guarantees</h2>
+<h2>Delivery guarantees</h2>
 <p>In general, Kafka only supports at-least once delivery. For exactly-once delivery, applications are expected to maintain their own de-duplication logic.</p>
 <p>The messages delivered from one partition to a consumer are always in-order. However, messages from different partitions may not be in order.</p>
 <hr />
-<p>This summary provides a brief overview of the Kafka research paper. Note that the paper is dated, and many aspects of Kafka have evolved since its publication. For up-to-date information, consult the <a href="https://kafka.apache.org/documentation/">official Kafka documentation</a>. For a deeper understanding, you can read the full paper <a href="https://drive.google.com/file/d/1p-j0V1b2lJdL2ikPLzMg11z1P1hlzwFa/view?usp=sharing">here</a>.</p>
+<p>This summary provides a brief overview of the Kafka research paper. Note that the paper is dated, and many aspects of Kafka have evolved since its publication. For up-to-date information, consult the <a href="https://kafka.apache.org/documentation/">official Kafka documentation</a>. </p>
+<p>For a deeper understanding, you can read the full paper <a href="https://drive.google.com/file/d/1p-j0V1b2lJdL2ikPLzMg11z1P1hlzwFa/view?usp=sharing">here</a>.</p>
     </div>
 </section>
 
