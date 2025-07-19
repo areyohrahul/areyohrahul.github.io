@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dive Deep Into ScheduledExecutorService’s Internals</title>
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"></noscript>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){ dataLayer.push(arguments); }
+      gtag('js', new Date());
+
+      gtag('config', 'G-RP3XSZXCG2');
+    </script>
+    
+<link rel="stylesheet" href="/blogs/css/content.css" />
+
+</head>
+<body>
+
+<nav class="navbar is-transparent">
+    <div class="container">
+        <div class="navbar-brand">
+            <a class="navbar-item is-size-3 has-text-weight-bold" href="/">Rahul Arora</a>
+            <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false" data-target="navMenu">
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+            </a>
+        </div>
+        <div id="navMenu" class="navbar-menu">
+            <div class="navbar-end">
+                <a class="navbar-item is-size-5" href="/blogs/index.html">Blogs</a>
+                <a class="navbar-item is-size-5" href="/reads/index.html">Reads</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+
+<section class="section">
+    <div class="container content">
+        <h1 class="title is-3 mb-2">Dive Deep Into ScheduledExecutorService’s Internals</h1>
+        
+        <div class="tags is-justify-content-start mb-0">
+            
+            <span class="tag has-background-light has-text-dark">java</span>
+            
+            <span class="tag has-background-light has-text-dark">data structures</span>
+            
+        </div>
+        
+        
+        <p class="has-text-grey is-size-6 mt-0 mb-4">7 min read</p>
+        
+        <p>Java's <code>ScheduledExecutorService</code> is the ultimate go-to solution when it comes to running task threads periodically or with a fixed (including a delay of 0) interval.</p>
+<p>But, have you ever wondered how this all works internally? Like how are different race conditions solved? Or how are tasks delayed for some time and picked up right when they are required?</p>
+<p>In this article, we delve into the internal mechanisms of this exceptional library. We explore the underlying data structures that support its functionality, uncover the strategies employed to handle race conditions, and examine the seamless coordination among multiple internal classes that ensures smooth operation.</p>
+<p>This will be really interesting so, without further ado, let's begin.</p>
+<hr />
+<h2>Tell me the basics first</h2>
+<p>In this section, we'll take a brief look at the essential classes that contribute to understanding the <code>ScheduledExecutorService</code> and how they are interconnected.</p>
+<p>The diagram given below shows three significant components: <code>Executor</code>, <code>ThreadPoolExecutor</code>, and <code>ScheduledThreadPoolExecutor</code>. Now, let's try to get a gist of these components.</p>
+<p><img alt="Alt text" src="/blogs/scheduled-executor-service/1.png" /></p>
+<h3>Executors</h3>
+<p><a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/concurrent/Executors.java">This class</a> contains all the factory and utility methods that are required to create or manage thread pools. You would have used it at some point to create one yourself. An example code snippet of how it is used is given below:</p>
+<pre class="codehilite"><code class="language-java">ScheduledExecutorService scheduledExecutorService = Executors.newScheduledThreadPool(10);
+</code></pre>
+
+<p>This code snippet will internally create a <code>ScheduledThreadPoolExecutor</code> of 10 threads. Also, the code given above creates a <code>ScheduledThreadPoolExecutor</code>, but it can be used to create a variety of different thread pools.</p>
+<h3>ThreadPoolExecutor</h3>
+<p>At the core of this library, the <a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/concurrent/ThreadPoolExecutor.java#L1"><code>ThreadPoolExecutor</code></a> class performs various vital functions, including configuring and managing the thread pool, handling task execution, and maintaining necessary bookkeeping.</p>
+<p>If you closely observed the diagram mentioned earlier, you would have noticed two significant sub-components within the <code>ThreadPoolExecutor</code>.</p>
+<h4>Worker</h4>
+<p>The first one is the <a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/concurrent/ThreadPoolExecutor.java#L579"><code>Worker</code></a>, a nested class defined within the <code>ThreadPoolExecutor</code>. When we refer to a thread pool, we implicitly refer to these workers. It is the responsibility of the <code>ThreadPoolExecutor</code> to manage this worker pool efficiently. This includes <a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/concurrent/ThreadPoolExecutor.java#L901">adding workers</a>, <a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/concurrent/ThreadPoolExecutor.java#L1127">running workers</a>, <a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/concurrent/ThreadPoolExecutor.java#L758">interrupting workers</a>, etc.</p>
+<p>Whenever a client submits a task to the <code>ExecutorService</code>, these are picked up by one of the worker threads and executed.</p>
+<h4>BlockingQueue</h4>
+<p>The second crucial attribute is <a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/concurrent/BlockingQueue.java#L180"><code>BlockingQueue</code></a>. By default, the <a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/concurrent/ThreadPoolExecutor.java#L437">work queue</a> employed within the <code>ThreadPoolExecutor</code> is a <code>BlockingQueue</code>. Its primary function is to receive tasks from the client thread and distribute them among the worker threads in a thread-safe manner.</p>
+<h3>ScheduledThreadPoolExecutor</h3>
+<p>The <a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/concurrent/ScheduledThreadPoolExecutor.java#L1"><code>ScheduledThreadPoolExecutor</code></a> class is an extension of <code>ThreadPoolExecutor</code>. It leverages various methods from its parent class while introducing a single modification: the work queue definition. Instead of a simple <code>BlockingQueue</code>, it utilizes an extended version known as <a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/concurrent/ScheduledThreadPoolExecutor.java#L804"><code>DelayedWorkQueue</code></a>.</p>
+<p>This specialized data structure lies at the heart of the scheduling mechanism. We will go through it in detail in the next section.</p>
+<p>Having understood the various classes involved, let's dive deeper into their intricate details.</p>
+<hr />
+<h2>Let's focus on the core</h2>
+<p>When a task is submitted to the <code>ScheduledExecutorService</code>, it gets added to the <code>DelayedWorkQueue</code>.</p>
+<p>This queue is continuously polled by the available worker threads. Once a task is detected in the queue, the worker threads contend for a <a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/concurrent/ScheduledThreadPoolExecutor.java#L1075">lock</a> to remove the task. This locking mechanism ensures that multiple workers do not attempt to process the same task simultaneously.</p>
+<p><img alt="" src="/blogs/scheduled-executor-service/2.png" /></p>
+<p>Now, here's the intriguing part: the work queue utilized by <code>ScheduledExecutorService</code> is not a typical queue; it's a min-heap. Tasks within this heap are sorted based on their scheduled execution delay. This means a task scheduled at time <code>T0</code> will be positioned above a task scheduled at time <code>T1</code>, given that <code>T1 &gt; T0</code>.</p>
+<p>So, when the worker threads poll the queue, they also check whether the task at the head of the queue is <a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/concurrent/ScheduledThreadPoolExecutor.java#L1122">ready for execution</a> or not based on the current timestamp and the timestamp at which the task was supposed to run.</p>
+<p>Once a task becomes eligible, it is extracted from the queue and executed promptly. An example code snippet to schedule a task with a fixed delay of 5 seconds is given below:</p>
+<pre class="codehilite"><code class="language-java">ScheduledExecutorService scheduledExecutorService = Executors.newScheduledThreadPool(10);
+scheduledExecutorService.schedule(new Runnable() {
+    @Override
+    public void run() {
+        System.out.println(&quot;Hello World!&quot;);
+    }
+}, 5, TimeUnit.SECONDS);
+</code></pre>
+
+<p>The explanation provided above effectively covers the scenario of a one-time scheduled task. Now, let's consider recurring tasks and instant tasks, which are handled similarly.</p>
+<h3>Recurring tasks</h3>
+<p>After a recurring task completes its execution for the first time, it is reintroduced into the work queue with the given delay. This cycle continues until the task is explicitly canceled by the client.</p>
+<p>An example code snippet to run a recurring task with an initial delay of 0 seconds and then a periodic interval of 5 seconds is given below:</p>
+<pre class="codehilite"><code class="language-java">ScheduledExecutorService scheduledExecutorService = Executors.newScheduledThreadPool(10);
+scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
+    @Override
+    public void run() {
+        System.out.println(&quot;Hello World!&quot;);
+    }
+}, 0, 5, TimeUnit.SECONDS);
+</code></pre>
+
+<h3>Instant tasks</h3>
+<p>Instant tasks are a subset of tasks with a fixed delay. In this case, however, the fixed delay is set to 0. Thus, instant tasks are executed immediately upon being scheduled. An example code snippet to run the task instantly is given below:</p>
+<pre class="codehilite"><code class="language-java">ScheduledExecutorService scheduledExecutorService = Executors.newScheduledThreadPool(10);
+scheduledExecutorService.submit(new Runnable() {
+    @Override
+    public void run() {
+        System.out.println(&quot;Hello World!&quot;);
+    }
+});
+</code></pre>
+
+<hr />
+<h2>Ending notes</h2>
+<p>In this article, we have explored the internal mechanisms of the <code>ScheduledExecutorService</code> without delving into unnecessary complexity. The elegance of its implementation within Java is truly remarkable. By comprehending its internals, you can enhance your skills as a developer, as the principles learned can be applied to various scenarios that involve the utilization of a delay queue.</p>
+<p>Hope you learned something new today.</p>
+<p>Thank you for reading. Happy coding!</p>
+    </div>
+</section>
+
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const $burger = document.querySelector('.navbar-burger');
+      const $menu = document.querySelector('#navMenu');
+      $burger.addEventListener('click', () => {
+        $burger.classList.toggle('is-active');
+        $menu.classList.toggle('is-active');
+      });
+    });
+  </script>
+</body>
+</html>

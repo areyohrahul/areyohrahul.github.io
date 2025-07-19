@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kafka: a Distributed Messaging System for Log Processing</title>
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"></noscript>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){ dataLayer.push(arguments); }
+      gtag('js', new Date());
+
+      gtag('config', 'G-RP3XSZXCG2');
+    </script>
+    
+<link rel="stylesheet" href="/research-papers/css/content.css" />
+
+</head>
+<body>
+
+<nav class="navbar is-transparent">
+    <div class="container">
+        <div class="navbar-brand">
+            <a class="navbar-item is-size-3 has-text-weight-bold" href="/">Rahul Arora</a>
+            <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false" data-target="navMenu">
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+            </a>
+        </div>
+        <div id="navMenu" class="navbar-menu">
+            <div class="navbar-end">
+                <a class="navbar-item is-size-5" href="/blogs/index.html">Blogs</a>
+                <a class="navbar-item is-size-5" href="/reads/index.html">Reads</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+
+<section class="section">
+    <div class="container content">
+        <h1 class="title is-3 mb-2">Kafka: a Distributed Messaging System for Log Processing</h1>
+        
+        <div class="tags is-justify-content-start mb-0">
+            
+            <span class="tag has-background-light has-text-dark">kafka</span>
+            
+            <span class="tag has-background-light has-text-dark">distributed</span>
+            
+            <span class="tag has-background-light has-text-dark">queue</span>
+            
+        </div>
+        
+        
+        <p class="has-text-grey is-size-6 mt-0 mb-4">7 min read</p>
+        
+        <p>These are just high-level notes to give you a quick overview. For the full details, read the complete research paper <a href="https://drive.google.com/file/d/1p-j0V1b2lJdL2ikPLzMg11z1P1hlzwFa/view?usp=sharing">here</a>.</p>
+<hr />
+<h2>Introduction</h2>
+<p>Kafka is a distributed messaging system, designed with inspiration from traditional messaging platforms. However, it introduces a few unconventional design choices that make it exceptionally efficient.</p>
+<p>Kafka is well-suited for both online and offline data consumption. At the time this research paper was published, LinkedIn had already been using Kafka in production for about six months.</p>
+<hr />
+<h2>Related work</h2>
+<p>Traditional messaging systems have existed for a long time but they are not quite suitable for log processing. </p>
+<ul>
+<li>They provide reliable delivery semantics but they are not suitable for systems where losing some messages (like page views) is acceptable.</li>
+<li>They also not focus on throughput as the core design goal. Example, JMS has no API to allow the producer to batch multiple messages into a single request. This means each message will incur a complete TCP/IP roundtrip.</li>
+<li>They are weak in distributed support. There is no easy way to partition the messages and store them in different machines.</li>
+<li>They assume near immediate consumption of messages. Their performance starts to degrade as the messages grow.</li>
+</ul>
+<p>Other systems that exist (like Facebook's Scribe or Yahoo's data highway) are mostly designed for handling offline log consumption. Additionally, most of them are push based.</p>
+<hr />
+<h2>Kafka architecture and design principles</h2>
+<p>A stream of messages of a particular type is defined by a topic (example a topic for just user sign-ups). A producer can publish messages to a topic. The published messages are then stored at a set of servers called brokers. A consumer can subscribe to one or more topics from the brokers, and consume the subscribed messages by pulling data from the brokers.</p>
+<p>Messages can be encoded using any serialisation method. For efficiency, the producer can send multiple messages in one request.</p>
+<p>Messages are sent to random partitions or to a specific partition based on a key. The key is used to ensure that messages with the same key are always sent to the same partition, which is important for maintaining order for those messages.</p>
+<p>To consume messages, consumers are grouped into what’s called a consumer group. Each consumer in the group reads from a subset of the topic's partitions, allowing parallel processing. Multiple consumer groups can independently consume the same topic—for example, both a search ingestion system and an ad analytics system might consume the same page view events.</p>
+<p>Each topic is split into multiple partitions, which helps distribute load and increase parallelism. These partitions are also replicated across different brokers to ensure fault tolerance and high availability.</p>
+<p>Refer to the image below for a visual representation of the Kafka architecture:</p>
+<p><img alt="" src="/research-papers/kafka-distributed-messaging-system/1.png" /></p>
+<hr />
+<h2>Efficiency on a single partition</h2>
+<h3>Simple storage</h3>
+<p>Each partition is divided into multiple files of almost the same size. New messages are appended to the current file. These messages are buffered in memory and are flushed in batches for better efficiency.</p>
+<p>Unlike typical messaging systems, Kafka messages don’t have explicit IDs. Instead, each message is identified by its logical offset in the log, avoiding the overhead of random-access indexes. These offsets increase but aren’t necessarily consecutive. Each new offset is computed by adding the current message’s length to its offset.</p>
+<p>Consumers read messages sequentially from a partition. Acknowledging an offset implies all prior messages have been received. Consumers issue asynchronous pull requests with a starting offset and byte limit. Brokers maintain an in-memory list of offsets (e.g., segment starts) to locate the correct file and return data. After consuming a message, the consumer calculates the next offset and uses it in the subsequent pull request. Image given below illustrates the log layout and offset index.</p>
+<p><img alt="" src="/research-papers/kafka-distributed-messaging-system/2.png" /></p>
+<h3>Efficient transfer</h3>
+<p>Producers can send multiple messages in a single request. Consumers can also read multiple messages in a single fetch request.</p>
+<p>No external cache is used to store the messages. Kafka relies on the <a href="/blogs/page-cache/index.html">OS page cache</a>. This has the main advantage of avoiding double-buffering. This has the additional benefit of retaining warm cache even when a broker process is restarted. This also avoids the garbage collection cost.</p>
+<p>Kafka also uses the concept of <strong>zero copy</strong>. Sending bytes from a local file to a remote socket typically involves four data copies and two system calls: reading from disk to the page cache, copying to an app buffer, then to a kernel buffer, and finally sending to the socket. Linux's <code>sendfile</code> API reduces this overhead by eliminating two copies and one system call, enabling direct transfer from file to socket. </p>
+<h3>Stateless broker</h3>
+<p>Unlike most messaging systems, Kafka lets consumers track their own consumption progress instead of relying on the broker. This design simplifies the broker and reduces its overhead.</p>
+<hr />
+<h2>Distributed coordination</h2>
+<p>Each partition of a topic is the smallest unit of parallelism. This means that at any given time, all messages from one partition are consumed only by a single consumer within each consumer group.</p>
+<p>There is no master node. Consumers coordinate among themselves in a decentralized fashion. This is facilitated by a highly available consensus service called Zookeeper.</p>
+<p>Kafka uses Zookeeper for the following tasks:</p>
+<ul>
+<li>Detecting the addition and the removal of brokers and consumers.</li>
+<li>Triggering a re-balance process in each consumer when the above events happen.</li>
+<li>Maintaining the consumption relationship and keeping track of the consumed offset of each partition.</li>
+</ul>
+<hr />
+<h2>Delivery guarantees</h2>
+<p>In general, Kafka only supports at-least once delivery. For exactly-once delivery, applications are expected to maintain their own de-duplication logic.</p>
+<p>The messages delivered from one partition to a consumer are always in-order. However, messages from different partitions may not be in order.</p>
+<hr />
+<p>This summary provides a brief overview of the Kafka research paper. Note that the paper is dated, and many aspects of Kafka have evolved since its publication. For up-to-date information, consult the <a href="https://kafka.apache.org/documentation/">official Kafka documentation</a>. </p>
+<p>For a deeper understanding, you can read the full paper <a href="https://drive.google.com/file/d/1p-j0V1b2lJdL2ikPLzMg11z1P1hlzwFa/view?usp=sharing">here</a>.</p>
+    </div>
+</section>
+
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const $burger = document.querySelector('.navbar-burger');
+      const $menu = document.querySelector('#navMenu');
+      $burger.addEventListener('click', () => {
+        $burger.classList.toggle('is-active');
+        $menu.classList.toggle('is-active');
+      });
+    });
+  </script>
+</body>
+</html>

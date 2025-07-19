@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Defeat Cache Stampedes Through Probabilistic Cache Recompute Algorithm</title>
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"></noscript>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){ dataLayer.push(arguments); }
+      gtag('js', new Date());
+
+      gtag('config', 'G-RP3XSZXCG2');
+    </script>
+    
+<link rel="stylesheet" href="/blogs/css/content.css" />
+
+</head>
+<body>
+
+<nav class="navbar is-transparent">
+    <div class="container">
+        <div class="navbar-brand">
+            <a class="navbar-item is-size-3 has-text-weight-bold" href="/">Rahul Arora</a>
+            <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false" data-target="navMenu">
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+            </a>
+        </div>
+        <div id="navMenu" class="navbar-menu">
+            <div class="navbar-end">
+                <a class="navbar-item is-size-5" href="/blogs/index.html">Blogs</a>
+                <a class="navbar-item is-size-5" href="/reads/index.html">Reads</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+
+<section class="section">
+    <div class="container content">
+        <h1 class="title is-3 mb-2">Defeat Cache Stampedes Through Probabilistic Cache Recompute Algorithm</h1>
+        
+        <div class="tags is-justify-content-start mb-0">
+            
+            <span class="tag has-background-light has-text-dark">system design</span>
+            
+            <span class="tag has-background-light has-text-dark">algorithms</span>
+            
+        </div>
+        
+        
+        <p class="has-text-grey is-size-6 mt-0 mb-4">9 min read</p>
+        
+        <p>In most large-scale applications, distributed cache servers are employed to efficiently cache data that is computationally expensive to generate at runtime for every request. By utilizing cache servers, expensive calls to databases, external clients, disks, and other resources can be avoided, resulting in improved application throughput. However, under high load, if a frequently accessed item in the cache expires, it can lead to a situation known as a cache stampede, where multiple requests simultaneously attempt to regenerate the expired items. This can cause a sudden spike in resource usage and negatively impact the overall performance of the application.</p>
+<p>In this article, we will explore a range of approaches to prevent cache stampedes, starting from the most basic to the most optimal solutions.</p>
+<hr />
+<h2>External recomputation</h2>
+<p>This approach transfers the responsibility of cache regeneration for the most accessed data from the request thread to a dedicated daemon thread. This thread is responsible for monitoring the hot cache keys and their respective time-to-live (TTL) values, ensuring their timely regeneration.</p>
+<p>While this technique offers advantages, it is important to consider its limitations:</p>
+<ol>
+<li>It is primarily suited for static cache keys, which remain unchanged across different clients.</li>
+<li>Maintaining the high availability of the daemon thread can pose significant challenges.</li>
+</ol>
+<p>To address these limitations, many applications adopt alternative strategies to mitigate potential issues and enhance performance.</p>
+<hr />
+<h2>Locking</h2>
+<p>In this approach, when a cache miss occurs, all request threads attempt to acquire a central lock on the cache key to be generated. The thread that successfully acquires the lock proceeds with the cache recomputation, while the other threads have the following options to handle the situation gracefully:</p>
+<ol>
+<li>Return back a 404 status to the client and let the client handle it gracefully, if feasible.</li>
+<li>Wait for a defined timeout for the cache key to be recomputed, and then return it to the client.</li>
+</ol>
+<p>It might look like an easy and foolproof approach to handle cache stampedes but it also has a few limitations:</p>
+<ol>
+<li>Implementing a distributed lock flawlessly could be a challenge.</li>
+<li>It requires an additional call from each request thread to the datastore or a downstream service to acquire the lock.</li>
+<li>Handling the lock TTLs and retries can be complex.</li>
+</ol>
+<p>While this approach improves upon the previous one, it still presents challenges that many applications cannot afford to face. So, what is the optimal solution? Let's explore it further.</p>
+<hr />
+<h2>Probabilistic early recomputation</h2>
+<p>In this approach, each request thread has the capability to independently decide whether to recompute the cache value before its expiration based on a probabilistic formula. Several factors influence the probability of triggering a recomputation:</p>
+<ol>
+<li>A user-defined constant value. It directly affects the probability of initiating a cache key recomputation.</li>
+<li>The time required to perform the cache key recomputation. A higher value for this factor increases the likelihood of triggering a recomputation.</li>
+<li>The proximity of the cache key's expiration time. The closer it is to expiration, the higher the probability of recomputation.</li>
+<li>The frequency of access to the cache key. More frequent access increases the chances of recomputing the cache key.</li>
+</ol>
+<p>Now, let’s take a quick glance at a simplified code snippet that demonstrates the implementation of this formula. Don’t worry if you find it a bit overwhelming at first glance. In the next section, we will delve into each part of the code in detail and gain a comprehensive understanding of how it works. So, feel free to just skim through it.</p>
+<pre class="codehilite"><code class="language-java">public class CacheDriver {
+
+  private final int BETA = 1; // User defined constant value
+  private final long TTL = 300; // This is in seconds
+
+  // More methods
+
+  public Object fetch(String key) {
+    CacheData cacheData = readCache(key);
+    if (cacheData.getValue() == null || (System.currentTimeMillis() - cacheData.getDelta() * BETA * Math.log(new Random().nextDouble())) &gt;= cacheData.getExpiry()) {
+      long startTime = System.currentTimeMillis();
+      Object value = recomputeValue(key);
+      long delta = startTime - System.currentTimeMillis();
+      writeCache(key, value, delta);
+    }
+    return cacheData.getValue();
+  }
+
+  private CacheData readCache(String key) {
+    // Some cache calls to fetch data and metadata
+  }
+
+  private CacheData writeCache(String key, Object value, long delta) {
+    // Some cache calls to store data and metadata
+  }
+
+  private Object recomputeValue(String key) {
+    // Some business logic, external DB calls etc
+  }
+
+  // More methods
+}
+
+public class CacheData {
+
+  private Object value;
+  private long delta;
+  private long expiry;
+
+  // Getters and setters
+}
+</code></pre>
+
+<p>In the provided code snippets, <code>CacheDriver</code> is responsible for handling all cache interactions, recomputation of the data, and executing the probabilistic cache recompute algorithm.</p>
+<p>The entry point in this class is the <code>fetch(String key)</code> method. It takes in a key from the client and tries to fetch it from the cache using the internal method of the class called <code>readCache(String key)</code>.</p>
+<p>If the data is not present, then the cache key is recomputed for sure but if the data is present for it, then we calculate whether we want to recompute it or not. This decision is taken based on the following line:</p>
+<pre class="codehilite"><code class="language-java">if (cacheData.getValue() == null || (System.currentTimeMillis() - cacheData.getDelta() * BETA * Math.log(new Random().nextDouble())) &gt;= cacheData.getExpiry()) {
+  // Some logic
+}
+</code></pre>
+
+<p>Also, in this code snippet, we utilize an object called <code>cacheData</code>, which is an instance of the <code>CacheData</code> class. The class stores both the data and the associated metadata for a specific cache key. It has three major attributes, first is the <code>value</code> for the cache key. Second, the <code>delta</code> is the time taken to compute the cache key in the last write. The third one is the <code>expiry</code> of the key.</p>
+<p>The line of code mentioned above checks if the current time minus a calculated gap (based on the delta, expiry, constant, and random value) is greater than or equal to the current expiry of the cache key or not. If the calculated time is greater than or equal to the expiry, a cache recompute is triggered. This can shortly be represented by the following formula:</p>
+<pre class="codehilite"><code>currentTime() - (∆ * ß * log(rand(0,1))) &gt;= expiryTime
+</code></pre>
+
+<p>Where:
+- <code>∆</code> is the time taken to recompute the key (delta)
+- <code>ß</code> is a user-defined constant
+- <code>rand(0,1)</code> is a random number between 0 and 1</p>
+<p>It’s worth noting that the mentioned <code>gap</code> <strong>is always less than or equal to 0 (which makes the equation shared above positive)</strong> because it depends on three factors. The constant <code>BETA</code> is an integer greater than zero. The <code>delta</code>, being the time taken to recompute the cache key, is always positive. Lastly, the <code>Math.log(new Random().nextDouble())</code> generates a random negative number, ensuring that when this value is incorporated into the calculation, the overall value of the <code>gap</code> becomes less than or equal to 0.</p>
+<p>Now, you might be curious about how the hotness of a cache key influences the frequency of early recomputations. The explanation is straightforward. Let’s consider a cache key that is infrequently accessed. This implies that a smaller number of threads are responsible for deciding whether the cache key needs to be recomputed or not.</p>
+<p>Conversely, if a cache key has higher throughput, it means more threads are involved in determining if a cache recomputation is required or not. This, consequently, raises the probability of triggering the recomputation process.</p>
+<hr />
+<h2>Ending notes</h2>
+<p>The probabilistic cache algorithm presents a powerful solution to mitigate cache stampedes and optimize application performance.</p>
+<p>Adding a very good research paper on the same topic below:  </p>
+<p><a href="https://cseweb.ucsd.edu/~avattani/papers/cache_stampede.pdf">https://cseweb.ucsd.edu/~avattani/papers/cache_stampede.pdf</a><br /></p>
+<p>Hope you learned something new today.</p>
+<p>Thank you for reading. Happy coding!</p>
+    </div>
+</section>
+
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const $burger = document.querySelector('.navbar-burger');
+      const $menu = document.querySelector('#navMenu');
+      $burger.addEventListener('click', () => {
+        $burger.classList.toggle('is-active');
+        $menu.classList.toggle('is-active');
+      });
+    });
+  </script>
+</body>
+</html>

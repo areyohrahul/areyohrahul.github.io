@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>What makes Java Bitset so cool?</title>
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"></noscript>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){ dataLayer.push(arguments); }
+      gtag('js', new Date());
+
+      gtag('config', 'G-RP3XSZXCG2');
+    </script>
+    
+<link rel="stylesheet" href="/blogs/css/content.css" />
+
+</head>
+<body>
+
+<nav class="navbar is-transparent">
+    <div class="container">
+        <div class="navbar-brand">
+            <a class="navbar-item is-size-3 has-text-weight-bold" href="/">Rahul Arora</a>
+            <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false" data-target="navMenu">
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+            </a>
+        </div>
+        <div id="navMenu" class="navbar-menu">
+            <div class="navbar-end">
+                <a class="navbar-item is-size-5" href="/blogs/index.html">Blogs</a>
+                <a class="navbar-item is-size-5" href="/reads/index.html">Reads</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+
+<section class="section">
+    <div class="container content">
+        <h1 class="title is-3 mb-2">What makes Java Bitset so cool?</h1>
+        
+        <div class="tags is-justify-content-start mb-0">
+            
+            <span class="tag has-background-light has-text-dark">java</span>
+            
+            <span class="tag has-background-light has-text-dark">data structures</span>
+            
+        </div>
+        
+        
+        <p class="has-text-grey is-size-6 mt-0 mb-4">4 min read</p>
+        
+        <p>If you've ever assumed that Java's <code>BitSet</code> is just a glorified boolean array, you're not alone. I used to think the same-until I took a peek under the hood. What I found was pretty surprising, and if you're curious too, you're in for a treat. Let's dive into why <code>BitSet</code> is way cooler than it seems to be.</p>
+<hr />
+<h2>What is a Java Bitset if not a boolean array?</h2>
+<p>Java <code>BitSet</code> is much more than a simple <code>boolean</code> array. It uses bit manipulation on <code>long</code> data types to efficiently store and manage data. If this sounds confusing, don't worry—we'll break it down.</p>
+<h3>Bit manipulation 101</h3>
+<p>A <code>long</code> in Java is a 64-bit number, meaning it can store 64 individual bits. With bit manipulation, you can directly control each of these bits.</p>
+<p>For example, to set a specific bit (let's say the 12th bit) in a <code>long</code> variable, you can use the OR operation. Imagine you have a 64-bit <code>long</code> variable called data, and you want to set the 12th bit to 1. You'd do something like this:</p>
+<pre class="codehilite"><code>data | 0000000000010000000000000000000000000000000000000000000000000000L
+</code></pre>
+
+<p>Here, everything is 0 except the bit you want to set. As a result, only that bit gets updated, while the rest remains unchanged.</p>
+<p>Now, if you want to check the value of the 12th bit in this variable, you'd use the AND operation:</p>
+<pre class="codehilite"><code>data &amp; 0000000000010000000000000000000000000000000000000000000000000000L
+</code></pre>
+
+<p>This will return 0 or 1, depending on whether that bit is set or not.</p>
+<h3>References from Java Bitset internals</h3>
+<p><code>Bitset</code> stores all the <a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/BitSet.java#L92">data</a> in a <code>long</code> array. This continuously keeps <a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/BitSet.java#L333C18-L333C32">changing</a> based on the data needs of the client just like most collections in Java.</p>
+<p>If you want to store the 1,000th bit, you first find the right index in the array. Then, you determine which specific bit (out of the 64 in that <code>long</code>) represents the 1,000th bit. Once you've identified it, you perform the necessary bitwise operation on that bit.</p>
+<h4>set()</h4>
+<p>When something is required to be set in the <code>Bitset</code>, a <code>set()</code> method is invoked. This method first finds out the index of the array this bit will fall into. Then, it verifies if the array has the required <a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/BitSet.java#L447">capacity</a> to store it. After that, it simply sets the bit using an <a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/BitSet.java#L449">OR</a> operation that we saw above.</p>
+<h4>get()</h4>
+<p><code>get()</code> operation works in a similar way. We first find out the <a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/BitSet.java#L627">index</a> of the array this bit will fall into. Then, we ensure that this position is in a <a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/BitSet.java#L628">valid</a> range or not. If it is, then we use an <a href="https://github.com/JetBrains/jdk8u_jdk/blob/master/src/share/classes/java/util/BitSet.java#L629">AND</a> operation to extract the bit value.</p>
+<p><code>BitSet</code> offers many additional features, but to keep this article focused, we won't dive into all of them here. If you're curious, I encourage you to explore its full capabilities by checking out the source code—it's a fascinating read!</p>
+<hr />
+<h2>Ending notes</h2>
+<p>Java <code>BitSet</code> is way more than just a fancy <code>boolean</code> array—it's a clever, efficient tool that makes managing bits surprisingly cool. Hopefully, this gave you a glimpse of how it works under the hood and why it's worth exploring.</p>
+<p>Hope you learned something new today.</p>
+<p>Thank you for reading. Happy coding!</p>
+    </div>
+</section>
+
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const $burger = document.querySelector('.navbar-burger');
+      const $menu = document.querySelector('#navMenu');
+      $burger.addEventListener('click', () => {
+        $burger.classList.toggle('is-active');
+        $menu.classList.toggle('is-active');
+      });
+    });
+  </script>
+</body>
+</html>

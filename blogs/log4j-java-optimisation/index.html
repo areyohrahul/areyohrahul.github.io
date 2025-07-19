@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lessons from Log4j's Internal Optimisations Techniques</title>
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"></noscript>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){ dataLayer.push(arguments); }
+      gtag('js', new Date());
+
+      gtag('config', 'G-RP3XSZXCG2');
+    </script>
+    
+<link rel="stylesheet" href="/blogs/css/content.css" />
+
+</head>
+<body>
+
+<nav class="navbar is-transparent">
+    <div class="container">
+        <div class="navbar-brand">
+            <a class="navbar-item is-size-3 has-text-weight-bold" href="/">Rahul Arora</a>
+            <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false" data-target="navMenu">
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+            </a>
+        </div>
+        <div id="navMenu" class="navbar-menu">
+            <div class="navbar-end">
+                <a class="navbar-item is-size-5" href="/blogs/index.html">Blogs</a>
+                <a class="navbar-item is-size-5" href="/reads/index.html">Reads</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+
+<section class="section">
+    <div class="container content">
+        <h1 class="title is-3 mb-2">Lessons from Log4j's Internal Optimisations Techniques</h1>
+        
+        <div class="tags is-justify-content-start mb-0">
+            
+            <span class="tag has-background-light has-text-dark">log4j2</span>
+            
+            <span class="tag has-background-light has-text-dark">java</span>
+            
+        </div>
+        
+        
+        <p class="has-text-grey is-size-6 mt-0 mb-4">12 min read</p>
+        
+        <p>Anybody who works on Java would have seen multiple codebases using Log4j2 for logging. But have you ever wondered why Log4j2 stands out among its competitors? The buzz around the town suggests that Log4j2's remarkable speed and memory efficiency are key factors.</p>
+<p>In this article, we will delve into the inner workings of Log4j2, uncovering its powerful techniques that deliver blazing-fast performance while minimizing memory consumption. By understanding and applying these techniques in your own codebase, you can enhance the performance of your application too.</p>
+<p>So, without any delay, let's embark on this insightful journey.</p>
+<hr />
+<h2>Reusing internal objects</h2>
+<p>Within standard Java-based web applications, a multitude of internal objects are generated during request processing. As the server handles an increasing number of requests, the volume of objects created rises accordingly, resulting in wasteful time spent on space allocation and garbage collection. The situation worsens when object creation proves to be both expensive and resource-intensive. These challenges significantly impact the application's performance and overall efficiency.</p>
+<p>Fortunately, Log4j2 recognized this challenge and effectively addressed it by implementing a smart approach of reusing internal objects whenever possible. In the following sections, we will explore specific classes within Log4j2 that exemplify these innovative techniques, shedding light on how Log4j2 tackles the problem head-on and sets a benchmark for efficient object handling.</p>
+<p>Let's take a closer look at a key class in Log4j2's codebase called <code>ReusableMessageFactory</code>. Simplified for clarity, the class structure appears as follows:</p>
+<pre class="codehilite"><code class="language-java">public final class ReusableMessageFactory implements MessageFactory2, Serializable {
+
+    private static ThreadLocal&lt;ReusableSimpleMessage&gt; threadLocalSimpleMessage = new ThreadLocal();
+
+    public ReusableMessageFactory() {
+    }
+
+    public Message newMessage(final CharSequence charSequence) {
+        ReusableSimpleMessage result = getSimple();
+        result.set(charSequence);
+        return result;
+    }
+
+    private static ReusableSimpleMessage getSimple() {
+        ReusableSimpleMessage result = (ReusableSimpleMessage)threadLocalSimpleMessage.get();
+        if (result == null) {
+            result = new ReusableSimpleMessage();
+            threadLocalSimpleMessage.set(result);
+        }
+
+        return result;
+    }
+
+    public static void release(final Message message) {
+        if (message instanceof Clearable) {
+            ((Clearable)message).clear();
+        }
+    }
+}
+</code></pre>
+
+<p>The provided code snippet showcases <code>ReusableMessageFactory</code>, a key component responsible for creating objects of different types of reusable classes. While these classes come in multiple variations, we will focus on the simplest implementation, which is called <code>ReusableSimpleMessage</code>. Below, you'll find a simplified version of this class:</p>
+<pre class="codehilite"><code class="language-java">public class ReusableSimpleMessage implements ReusableMessage, CharSequence, ParameterVisitable, Clearable {
+
+    private CharSequence charSequence;
+
+    public ReusableSimpleMessage() {
+    }
+
+    public void set(final CharSequence charSequence) {
+        this.charSequence = charSequence;
+    }
+
+    public void clear() {
+        this.charSequence = null;
+    }
+}
+</code></pre>
+
+<p>Note that this class implements an interface called <code>Clearable</code> which is common between all the reusable classes. This will come in handy in the later part.</p>
+<p>Now let's focus on the three significant aspects of the code snippets I have shared.</p>
+<p>The first notable element is the usage of <code>ThreadLocal</code> to cache the <code>ReusableSimpleMessage</code> type object for each thread. This approach optimizes performance by eliminating redundant object creation and reusing existing instances.</p>
+<pre class="codehilite"><code class="language-java">private static ThreadLocal&lt;ReusableSimpleMessage&gt; threadLocalSimpleMessage = new ThreadLocal();
+</code></pre>
+
+<p>Next is the <code>newMessage(final CharSequence charSequence)</code> method. If an instance of the <code>ReusableSimpleMessage</code> type doesn't already exist in the ThreadLocal cache, a new object is created using the CharSequence provided by the client and stored. However, if a cached object is available, it is retrieved and returned</p>
+<pre class="codehilite"><code class="language-java">public Message newMessage(final CharSequence charSequence) {
+    ReusableSimpleMessage result = getSimple();
+    result.set(charSequence);
+    return result;
+}
+
+private static ReusableSimpleMessage getSimple() {
+    ReusableSimpleMessage result = (ReusableSimpleMessage)threadLocalSimpleMessage.get();
+    if (result == null) {
+        result = new ReusableSimpleMessage();
+        threadLocalSimpleMessage.set(result);
+    }
+    return result;
+}
+</code></pre>
+
+<p>The third and most important aspect is the <code>release(final Message message)</code> method. When the outer classes finish using the <code>ReusableSimpleMessage</code> type object for their internal operations, this method is invoked. Its implementation ensures that any resources or data stored within the object are properly cleared or reset. You would have noticed the usage of the <code>Clearable</code> interface here. If any other subclass of the <code>Message</code> type is passed which doesn't implement the <code>Clearable</code> interface, then it will be ignored.</p>
+<p>By performing this clearance, the object becomes ready for reuse in subsequent requests.</p>
+<pre class="codehilite"><code class="language-java">public static void release(final Message message) {
+    if (message instanceof Clearable) {
+        ((Clearable)message).clear();
+    }
+}
+</code></pre>
+
+<p>As mentioned earlier, there are various reusable classes used within Log4j2, and each class type, including <code>ReusableSimpleMessage</code>, incorporates its own implementation of the <code>clear()</code> method. Following this technique reduces a lot of pressure on the garbage collector and improves the throughput of your application.</p>
+<hr />
+<h2>Optimising varargs methods</h2>
+<p>In Java, varargs (variable arguments) is a feature that allows a method to accept a variable number of arguments of the same type.</p>
+<pre class="codehilite"><code class="language-java">// Example
+Message newMessage(String message, Object... params);
+</code></pre>
+
+<p>It provides flexibility when you don't know in advance how many arguments will be passed to a method. Using this feature makes your life easier as a developer but it comes with a downside.</p>
+<p>Digging deeper into how this works would show you that varargs functionality is just syntactical sugar over the use of arrays of variable size. Each time a varargs method is called, an array must be created to hold the variable arguments. This array allocation operation involves memory allocation and initialization, which takes time and resources. Additionally, all the variable arguments are needed to be copied to the newly created array, incurring further overhead. The problem becomes more pronounced when the method is frequently called or when a large number of arguments are used.</p>
+<p>To mitigate these performance concerns, Log4j2 takes a different approach. It offers overloaded methods that have a predefined number of parameters up to a certain limit. By providing multiple methods with fixed parameter counts, Log4j2 avoids the need for varargs in certain cases. Let's explore some code examples from the Log4j2 library to understand this better.</p>
+<p>Let's look at an interface called <code>MessageFactory2</code>. The code for the same is given below:</p>
+<pre class="codehilite"><code class="language-java">public interface MessageFactory2 extends MessageFactory {
+    Message newMessage(CharSequence charSequence);
+    Message newMessage(String message, Object p0);
+    Message newMessage(String message, Object p0, Object p1);
+    Message newMessage(String message, Object p0, Object p1, Object p2);
+    Message newMessage(String message, Object p0, Object p1, Object p2, Object p3);
+    Message newMessage(String message, Object p0, Object p1, Object p2, Object p3, Object p4);
+    Message newMessage(String message, Object p0, Object p1, Object p2, Object p3, Object p4, Object p5);
+    Message newMessage(String message, Object p0, Object p1, Object p2, Object p3, Object p4, Object p5, Object p6);
+    Message newMessage(String message, Object p0, Object p1, Object p2, Object p3, Object p4, Object p5, Object p6, Object p7);
+    Message newMessage(String message, Object p0, Object p1, Object p2, Object p3, Object p4, Object p5, Object p6, Object p7, Object p8);
+    Message newMessage(String message, Object p0, Object p1, Object p2, Object p3, Object p4, Object p5, Object p6, Object p7, Object p8, Object p9);
+}
+</code></pre>
+
+<p>While we are looking at it, let's also see the interface <code>MessageFactory</code> which is extended by <code>MessageFactory2</code></p>
+<pre class="codehilite"><code class="language-java">public interface MessageFactory {
+    Message newMessage(Object message);
+    Message newMessage(String message);
+    Message newMessage(String message, Object... params);
+}
+</code></pre>
+
+<p>As you might have observed, <code>MessageFactory</code> contains a method called <code>newMessage(String message, Object... params)</code>. This method takes a String and a list of optional params of type Object.</p>
+<p>The interesting part is that this method is further overloaded in the sub-interface called <code>MessageFactory2</code>.</p>
+<p>The benefit of this approach over a typical varargs method becomes apparent when a logging call is made by the client with a specific number of arguments. In such cases, the compiler can directly determine the appropriate overloaded method to invoke, treating it like any other method call. This eliminates the overhead associated with varargs and improves performance.</p>
+<p>Furthermore, if more arguments are passed than what is supported by the overloaded methods, it is seamlessly handled by the varargs method defined in the parent interface.</p>
+<p>By offering these overloaded methods, Log4j2 provides a more efficient alternative to traditional varargs usage. It optimizes the method resolution process and avoids the need for array creation and copying, resulting in improved execution speed and reduced memory consumption.</p>
+<hr />
+<h2>Using lock-free inter-thread communication</h2>
+<p>Log4j2 provides an implementation of async loggers to be used. Using this improves the throughput of the application because the clients no longer need to wait for the logging call to complete before proceeding.</p>
+<p>While the intricate workings of this mechanism are beyond the scope of our discussion today, it involves inter-thread communication to transfer data from the main producer thread to various appender threads responsible for writing the data to their respective destinations (files, consoles, etc).</p>
+<p>Different approaches can be employed to achieve inter-thread communication with one commonly used method being the utilization of a <a href="https://docs.oracle.com/javase/8/docs/api/java/util/concurrent/ArrayBlockingQueue.html">blocking array queue</a>. However, this approach has inherent limitations. It introduces thread contention, which negatively impacts logging throughput even in the async mode. The reason behind this is that multiple threads contend to read or write data from the queue, requiring the use of locks. To overcome this challenge, Log4j2 adopts a different strategy by leveraging a non-blocking data structure for inter-thread communication. This is where the <a href="https://lmax-exchange.github.io/disruptor/">disruptor</a> library comes into play.</p>
+<p><img alt="Alt text" src="/blogs/log4j-java-optimisation/1.png" /></p>
+<p>This library was built to implement a way to have lock-free inter-thread communication. At the core of it, there is a ring buffer data structure which is nothing but an array of fixed size. Producers claim slots in the ring buffer and publish their events by advancing the sequence number. Consumers, on the other hand, track their progress by keeping track of the sequence number they have processed. This allows for parallel processing without the need for locks or synchronized blocks.</p>
+<p>Again, getting into more depth about how it works internally would be out of the scope of today's conversation, the key concept is that this library can be utilized not only for async logging in Log4j2 but also in other scenarios that require efficient inter-thread communication and better throughput.</p>
+<p>Read more about Log4j2's async logging <a href="https://logging.apache.org/log4j/2.x/manual/async.html#UnderTheHood">here</a></p>
+<hr />
+<h2>Ending notes</h2>
+<p>The lessons learned from Log4j2's internal optimizations offer valuable insights for any Java application. By applying techniques such as object reuse, varargs optimization, and the use of the LMAX Disruptor library, developers can enhance the performance and efficiency of their own applications.</p>
+<p>Hope you learned something new today.</p>
+<p>Thank you for reading. Happy coding!</p>
+    </div>
+</section>
+
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const $burger = document.querySelector('.navbar-burger');
+      const $menu = document.querySelector('#navMenu');
+      $burger.addEventListener('click', () => {
+        $burger.classList.toggle('is-active');
+        $menu.classList.toggle('is-active');
+      });
+    });
+  </script>
+</body>
+</html>

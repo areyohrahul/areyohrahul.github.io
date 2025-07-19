@@ -1,0 +1,18 @@
+.blog-list {
+  padding-left: 1.25rem;
+  margin-top: 2rem;
+  list-style-type: disc;
+}
+
+.blog-item {
+  font-size: 1rem;
+  line-height: 1.4;
+  margin-bottom: 0.35rem;
+  list-style-position: outside;
+}
+
+.post-date {
+  color: #7a7a7a;
+  min-width: 90px;
+  display: inline-block;
+}

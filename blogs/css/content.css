@@ -1,0 +1,4 @@
+.content a {
+  overflow-wrap: anywhere; /* Wrap at any point */
+  word-break: break-word;  /* Break long words if needed */
+}

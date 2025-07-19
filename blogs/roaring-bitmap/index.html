@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RoaringBitmap: A Bitmap on Steroids</title>
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"></noscript>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){ dataLayer.push(arguments); }
+      gtag('js', new Date());
+
+      gtag('config', 'G-RP3XSZXCG2');
+    </script>
+    
+<link rel="stylesheet" href="/blogs/css/content.css" />
+
+</head>
+<body>
+
+<nav class="navbar is-transparent">
+    <div class="container">
+        <div class="navbar-brand">
+            <a class="navbar-item is-size-3 has-text-weight-bold" href="/">Rahul Arora</a>
+            <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false" data-target="navMenu">
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+            </a>
+        </div>
+        <div id="navMenu" class="navbar-menu">
+            <div class="navbar-end">
+                <a class="navbar-item is-size-5" href="/blogs/index.html">Blogs</a>
+                <a class="navbar-item is-size-5" href="/reads/index.html">Reads</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+
+<section class="section">
+    <div class="container content">
+        <h1 class="title is-3 mb-2">RoaringBitmap: A Bitmap on Steroids</h1>
+        
+        <div class="tags is-justify-content-start mb-0">
+            
+            <span class="tag has-background-light has-text-dark">data structures</span>
+            
+        </div>
+        
+        
+        <p class="has-text-grey is-size-6 mt-0 mb-4">6 min read</p>
+        
+        <p><code>RoaringBitmap</code> is a compressed <code>Bitmap</code> format designed to efficiently represent sets of integers. It strikes an excellent balance between memory efficiency and performance and enables fast operations like union, intersection, and iteration.</p>
+<p>Thanks to its effectiveness, <code>RoaringBitmap</code> has become the de facto <code>Bitmap</code> implementation in systems such as Apache Lucene, Apache Druid, ClickHouse, InfluxDB, and many others.</p>
+<p>In this article, we'll explore the internal encoding strategies used in <code>RoaringBitmap</code>, how it compresses data, why these strategies are effective, and an example to see it in practice.</p>
+<p>Note that this article is based on the <a href="https://github.com/apache/lucene/blob/releases/lucene/9.9.1/lucene/core/src/java/org/apache/lucene/util/RoaringDocIdSet.java#L33">implementation</a> of a <code>RoaringBitmap</code> used in <strong>Apache Lucene</strong>. While other systems may introduce slight variations in how it is implemented or optimized, the core principles remain consistent across most implementations.</p>
+<p>Also, please consider reading <a href="/blogs/java-bit-set/">this</a> article on the internals of a <code>Bitmap</code> to understand this article better.</p>
+<hr />
+<h2>How does this work?</h2>
+<p>Instead of using a single large <code>Bitmap</code> for the entire 32-bit integer space, <code>RoaringBitmap</code> splits the space into smaller chunks called blocks or containers. Each block handles a fixed range of values and is compressed independently, depending on how many values it contains.</p>
+<p>Each 32-bit integer is split into:</p>
+<ul>
+<li>The <strong>upper 16 bits:</strong> used as a key to identify the block (container).</li>
+<li>The <strong>lower 16 bits:</strong> used as an offset within that block.</li>
+</ul>
+<p>This means each block manages a range of 2¹⁶ = 65536 possible values. How a block is stored depends on how many values are present in it.</p>
+<p><code>RoaringBitmap</code> uses three encoding strategies:</p>
+<h3>Sparse blocks (≤ 4096 set values)</h3>
+<p>If a block contains up to 4096 values, it is considered sparse. In this case, the values are stored directly in a sorted short[] (since 16 bits are enough to represent any value within the block, and a short takes only 16 bits).</p>
+<p>This format is compact and fast for small sets.</p>
+<h3>Dense blocks (≥ 61440 set values)</h3>
+<p>If a block contains 61440 or more set values, it is considered dense. Since the total range is 65536, this means that fewer than 4096 (the difference between 65536 and 61440) values are not set.</p>
+<p>Instead of storing all the set values (which would take more space), RoaringBitmap stores the complement: the list of unset values, again using a short[]. When reading the block, the logic is inverted to return the correct set of values.</p>
+<p>This approach saves space when a block is nearly full.</p>
+<h3>Medium density block (4097–61439 set values)</h3>
+<p>If a block contains a moderate number of values, which is more than 4096 but fewer than 61440,  RoaringBitmap uses a Bitmap representation. This is a 65536-bit (8KB) fixed-size bitset, where each bit directly indicates the presence or absence of a value.</p>
+<p>This strikes a balance between memory use and access speed.</p>
+<hr />
+<h2>Why these thresholds?</h2>
+<p>You might wonder: why exactly 4096 is better suited for an array than a <code>Bitmap</code>? Is it just a magic number?</p>
+<p>No, this is not a magic number. This is chosen simply because above this number of documents in a block, a <code>Bitmap</code> becomes more memory-efficient than an array. Let's see the maths behind it.</p>
+<h3>Threshold for Sparse</h3>
+<p>A <code>short[]</code> stores each offset using 2 bytes.</p>
+<ul>
+<li>With 4096 values, the array size becomes 4096 * 2 = 8 KB.</li>
+<li>A bitmap block always takes 8KB, regardless of how many values are stored.</li>
+</ul>
+<p>So, if a block contains ≤ 4096 values, the array is smaller or equal in size compared to a <code>Bitmap</code>, making it more efficient.</p>
+<h3>Threshold for Dense</h3>
+<p>If a block has ≥ 61440 values set, then ≤ 4096 values are unset.</p>
+<ul>
+<li>Storing the unset values in a <code>short[]</code> now takes up to 8KB.</li>
+<li>Again, this is equal to or smaller than the size of a full <code>Bitmap</code> block.</li>
+</ul>
+<p>Since we're storing fewer items, it's more efficient to invert the logic and represent the block as a sparse list of absent values.</p>
+<hr />
+<h2>Let's see an example</h2>
+<p><img alt="" src="/blogs/roaring-bitmap/1.png" /></p>
+<p>In the example above, we first find the block for each number and its corresponding index in each block.</p>
+<p>Once that is defined, we group them together and then choose the right encoding strategy based on the cardinality of the block.</p>
+<p>In this example, all the blocks would be categorised as sparse and will use a <code>short[]</code>.</p>
+<hr />
+<h2>Closing notes</h2>
+<p><code>RoaringBitmap</code> is a powerful and practical data structure that offers a highly efficient way to represent large sets of integers. Its clever use of multiple encoding strategies makes it suitable for a wide range of use cases where both performance and memory usage are critical.</p>
+<p>If you're interested in digging deeper into how RoaringBitmap works or seeing it in action across different platforms, here are some great resources to explore:</p>
+<p><a href="https://roaringbitmap.org/">https://roaringbitmap.org/</a><br />
+<a href="https://www.elastic.co/blog/frame-of-reference-and-roaring-bitmaps">https://www.elastic.co/blog/frame-of-reference-and-roaring-bitmaps</a><br />
+<a href="https://jvns.ca/blog/2016/01/23/fast-integer-sets-with-roaring-bitmaps/">https://jvns.ca/blog/2016/01/23/fast-integer-sets-with-roaring-bitmaps/</a><br />
+<a href="https://github.com/RoaringBitmap/RoaringBitmap">https://github.com/RoaringBitmap/RoaringBitmap</a><br /></p>
+<p>Hope you learned something new today.</p>
+<p>Thank you for reading. Happy coding!</p>
+    </div>
+</section>
+
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const $burger = document.querySelector('.navbar-burger');
+      const $menu = document.querySelector('#navMenu');
+      $burger.addEventListener('click', () => {
+        $burger.classList.toggle('is-active');
+        $menu.classList.toggle('is-active');
+      });
+    });
+  </script>
+</body>
+</html>
