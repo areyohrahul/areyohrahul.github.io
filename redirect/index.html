@@ -74,21 +74,24 @@
   // MOBILE FLOW
   const mediumLink = document.getElementById("medium-link");
   const mobileContent = document.getElementById("mobile-content");
+  let emitButtonClickEvent = true;
   let userClicked = false;
 
   mobileContent.style.display = "block";
 
   const clickStart = Date.now();
-    mediumLink.href = mediumUrl;
-    mediumLink.addEventListener("click", () => {
-      const timeToClick = Math.round((Date.now() - clickStart) / 1000);
-      gtag('event', 'redirect_button_clicked', {
-        event_category: 'redirect_page',
-        blog: blogSlug || 'unknown',
-        device: device,
-        time_to_click: timeToClick
-      });
+  mediumLink.href = mediumUrl;
+  mediumLink.addEventListener("click", () => {
+    if (!emitButtonClickEvent) return; // Prevent multiple emissions
+    const timeToClick = Math.round((Date.now() - clickStart) / 1000);
+    gtag('event', 'redirect_button_clicked', {
+      event_category: 'redirect_page',
+      blog: blogSlug || 'unknown',
+      device: device,
+      time_to_click: timeToClick
+    });
     userClicked = true;
+    emitButtonClickEvent = false;
   });
 
   if (blogSlug) {
@@ -99,6 +102,7 @@
             blog: blogSlug,
             device: device
         });
+        emitButtonClickEvent = false;
         window.location.href = `/blogs/${blogSlug}`;
       }
     }, 4000);
