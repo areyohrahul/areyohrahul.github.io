@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Disruptor: High performance alternative to bounded queues for exchanging data between concurrent threads</title>
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"></noscript>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){ dataLayer.push(arguments); }
+      gtag('js', new Date());
+
+      gtag('config', 'G-RP3XSZXCG2');
+    </script>
+    
+<link rel="stylesheet" href="/research-papers/css/content.css" />
+
+</head>
+<body>
+
+<nav class="navbar is-transparent">
+    <div class="container">
+        <div class="navbar-brand">
+            <a class="navbar-item is-size-3 has-text-weight-bold" href="/">Rahul Arora</a>
+            <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false" data-target="navMenu">
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+            </a>
+        </div>
+        <div id="navMenu" class="navbar-menu">
+            <div class="navbar-end">
+                <a class="navbar-item is-size-5" href="/blogs/index.html">Blogs</a>
+                <a class="navbar-item is-size-5" href="/reads/index.html">Reads</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+
+<section class="section">
+    <div class="container content">
+        <h1 class="title is-3 mb-2">Disruptor: High performance alternative to bounded queues for exchanging data between concurrent threads</h1>
+        
+        <div class="tags is-justify-content-start mb-0">
+            
+            <span class="tag has-background-light has-text-dark">OS</span>
+            
+            <span class="tag has-background-light has-text-dark">queue</span>
+            
+            <span class="tag has-background-light has-text-dark">performance</span>
+            
+        </div>
+        
+        
+        <p class="has-text-grey is-size-6 mt-0 mb-4">11 min read</p>
+        
+        <p>These are just high-level notes to give you a quick overview. For the full details, read the complete research paper <a href="https://drive.google.com/file/d/1kYZYxOnb-HyyrkHPEbGjhx0jD3rADIwy/view?usp=drive_link">here</a></p>
+<hr />
+<h2>Introduction</h2>
+<p>The Disruptor was originally designed to efficiently pass data between different stages of a processing pipeline. Traditional queues were too slow for this purpose. Data exchange using them could be as slow as accessing data from disk, which becomes a bottleneck in high-performance systems.</p>
+<p>A key concept discussed in the Disruptor research paper is <strong>mechanical sympathy</strong>. This refers to designing software with a deep understanding of how modern CPUs work so that the software can run as efficiently as possible.</p>
+<p>Disruptor can handle over 25 million messages per second, with latency as low as 50 nanoseconds on processors running at moderate clock speeds. This performance is extremely close to the theoretical limits of core-to-core communication on modern CPUs.</p>
+<hr />
+<h2>The complexities of concurrency</h2>
+<p>Concurrent execution revolves around two core challenges: mutual exclusion and visibility of changes.</p>
+<ul>
+<li>Mutual exclusion ensures that when multiple threads access a shared resource, only one can modify it at a time—preventing race conditions and data corruption.</li>
+<li>Visibility of changes deals with ensuring that when one thread updates a shared value, other threads can reliably see the updated value.</li>
+</ul>
+<p>Among all operations in a concurrent system, contended writes are the most expensive. Coordinating these writes requires heavy synchronization, which can significantly degrade performance.</p>
+<h3>The cost of locks</h3>
+<p>Locks provide mutual exclusion and ensure that the visibility of change occurs in an ordered manner. But, locks are expensive because they require arbitration (thread coordination) when contented.</p>
+<p>The arbitration is achieved by a context switch to the OS. While the OS has control, OS may choose to do other housekeeping stuff. Additionally, the previously cached data and instructions (in the CPU cache) could be invalidated by another thread when the context switch happens.</p>
+<h3>The cost of CAS</h3>
+<p>A CAS operation is a special machine-code instruction that allows a word in memory to be conditionally set as an atomic operation. Example, increment a counter if it is currently 5.</p>
+<p>While updating, if the value doesn't match, then it is up to the thread attempting to perform the change to retry, re-reading the counter incrementing from that value and so on until the change succeeds.</p>
+<p>This approach is significantly better than the locks because it doesn't need a context switch.</p>
+<p>However CAS operations are not free of cost. The reasons for the same are explained below:</p>
+<ul>
+<li>CAS needs to make sure no other thread can interfere mid-operation so the CPU blocks it's instructions pipeline. This lock is brief but impacts performance.</li>
+<li>After a thread successfully performs a CAS, other threads need to see the updated value right away. This requires a memory barrier (explained better in the next section), which is an expensive operation that ensures all previous writes are visible to other threads before the CAS operation completes. This also prevents instructions re-ordering optimisation of CPU. </li>
+</ul>
+<h3>Memory barriers</h3>
+<p>Modern processors perform out-of-order execution of instructions to improve performance. An example for the same is given below:</p>
+<p><img alt="" src="/research-papers/lmax-disruptor-high-performanc-inter-thread-communication-library/1.png" /></p>
+<p>Here, <code>a = b + c</code> and <code>d = a + e</code> cannot execute in parallel because the second instruction depends on the first one. This is also true for the other set of instruction <code>f = g + h</code> and <code>k = f + l</code>.</p>
+<p>But, <code>a = b + c</code> and <code>f = g + h</code> can be executed in parallel. This is called out-of-order execution.</p>
+<p>And it works for single-threaded programs because the processors need only guarantee that program logic produces the same results regardless of execution order.</p>
+<p>However, this can lead to issues in a multithreaded environment. When threads share data, it is important that all memory changes appear in order, at the point required, for the data exchange to be successful. Let's look at the example below to understand this better:</p>
+<pre class="codehilite"><code>// Thread 1
+data = 42;       // (1)
+ready = true;    // (2)
+
+// Thread 2
+if (ready) {
+    System.out.println(data); // (3)
+}
+</code></pre>
+
+<p>Here’s what we expect:</p>
+<ul>
+<li>Thread 1 sets data to 42, then sets ready to true.</li>
+<li>Thread 2 sees ready == true and prints data, which should be 42.</li>
+</ul>
+<p>But, if the instructions are executed out-of-order, then Thread 2 might see ready as true before Thread 1 has set data to 42. This could lead to Thread 2 printing an incorrect value.</p>
+<p>To solve this problem, processors use memory barriers. A memory barrier is a special instruction that prevents the CPU from reordering instructions across the barrier. It also ensures that all previous writes are visible to other threads before any subsequent reads or writes.</p>
+<h3>Cache lines</h3>
+<p>A cache line is the smallest unit of memory that a modern CPU reads from or writes to its cache. It is typically 64 bytes in size.</p>
+<p>If two variables are in the same cache line, and they are written to by different threads, then they present the same problems of write contention as if they were a single variable. This is a concept know as <strong>false sharing</strong>. For high performance then, it is important to ensure that independent, but concurrently written variables do not share the same cache-line if contention is to be minimised.</p>
+<h3>The problem of queues</h3>
+<p>Queue implementations often suffer from write contention on shared variables like the head, tail, and size. In practice, queues are rarely in a steady state where the producer and consumer operate at exactly the same rate. Instead, they tend to swing between being nearly full or nearly empty, depending on which side is faster.</p>
+<p>Even if the head and tail operations are managed using separate synchronization primitives like CAS, they frequently reside on the same cache line. This causes false sharing, where independent updates from producer and consumer threads unintentionally interfere due to shared cache hardware, leading to performance degradation.</p>
+<hr />
+<h2>The design of the LMAX disruptor</h2>
+<p>At the heart of the disruptor mechanism sits a pre-allocated bounded data structure in the form of a ring-buffer. Data is added to the ring buffer through one or more producers and processed by one or more consumers.</p>
+<h3>Memory allocation</h3>
+<p>The ring buffer pre-allocates all its memory during startup. This eliminates problems related to garbage collection in managed languages, as the same entries are reused throughout the lifetime of the Disruptor instance. </p>
+<p>Since the entries are allocated together at initialization, they are highly likely to be placed contiguously in main memory. This layout promotes cache-friendly access patterns like cache striding, improving performance by minimizing cache misses.</p>
+<h3>Teasing apart the concerns</h3>
+<p>A pre-allocated ring buffer is used to reduce the load on garbage collector. This also helps in certain CPU optimisations like cache striding since it is likely that the entries are placed contiguously in memory.</p>
+<p>Before adding the data into this buffer, a sequence number is assigned to each entry. This sequence number is used to determine the position of the entry in the ring buffer. On most processors there is a very high cost for the remainder calculation on the sequence number, which determines the slot in the ring. This cost can be greatly reduced by making the ring size a power of 2. A bit mask of size minus one can be used to perform the remainder operation efficiently.</p>
+<p>In most common usages of the Disruptor there is usually only one producer. Typical producers are file readers or network listeners. In cases where there is a single producer there is no contention on sequence/entry allocation.</p>
+<p>In cases where multiple producers are involved, producers will race one another to claim the next entry in the ring buffer. This is supported by a CAS operation. Then, they write their data into the assigned slot and commit the offset so that it becomes available to the consumers.</p>
+<h3>Sequencing</h3>
+<p>Sequencing is the core of concurrency in the Disruptor. Producers claim the next sequence number to write data into the ring buffer. Single producer can use a counter; multiple producers use CAS to claim sequences atomically.</p>
+<p>Once data is written, the producer busy-spins waiting for previous sequences to be committed, then updates the cursor to commit its own sequence. This makes the data visible to consumers.</p>
+<p>Consumers use memory barriers to wait for a sequence. Once cursor is updated, memory visibility guarantees safe reads. Each consumer maintains its own sequence to prevent the ring from wrapping and to coordinate orderly processing.</p>
+<p>With one producer, no locks or CAS are needed—just memory barriers.</p>
+<h3>Batching effect</h3>
+<p>When consumers are waiting on an advancing cursor sequence in the ring buffer an interesting opportunity arises that is not possible with queues. If the consumer finds the ring buffer cursor has advanced a number of steps since it last checked it can process up to that sequence without getting involved in the concurrency mechanisms</p>
+<hr />
+<h2>Dependency graphs</h2>
+<p>Rather than using multiple queues to process data in a pipeline, Disruptor uses a single ring buffer that could be consumed by multiple consumers. This results in greatly reduced fixed costs of execution thus increasing throughput while reducing latency.</p>
+<hr />
+<p>This summary highlights the key ideas from the Disruptor paper. While the concepts remain influential, some implementation details may differ in newer versions. For the most accurate and up-to-date usage, refer to the <a href="https://github.com/LMAX-Exchange/disruptor">official Disruptor documentation</a>.</p>
+<p>To dive deeper, you can read the full paper <a href="https://drive.google.com/file/d/1kYZYxOnb-HyyrkHPEbGjhx0jD3rADIwy/view?usp=drive_link">here</a>.</p>
+    </div>
+</section>
+
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const $burger = document.querySelector('.navbar-burger');
+      const $menu = document.querySelector('#navMenu');
+      $burger.addEventListener('click', () => {
+        $burger.classList.toggle('is-active');
+        $menu.classList.toggle('is-active');
+      });
+    });
+  </script>
+</body>
+</html>

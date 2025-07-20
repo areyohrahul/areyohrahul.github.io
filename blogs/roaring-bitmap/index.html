@@ -43,6 +43,7 @@
 <section class="section">
     <div class="container content">
         <h1 class="title is-3 mb-2">RoaringBitmap: A Bitmap on Steroids</h1>
+
         
         <div class="tags is-justify-content-start mb-0">
             
@@ -50,9 +51,13 @@
             
         </div>
         
+
         
         <p class="has-text-grey is-size-6 mt-0 mb-4">6 min read</p>
         
+
+        
+
         <p><code>RoaringBitmap</code> is a compressed <code>Bitmap</code> format designed to efficiently represent sets of integers. It strikes an excellent balance between memory efficiency and performance and enables fast operations like union, intersection, and iteration.</p>
 <p>Thanks to its effectiveness, <code>RoaringBitmap</code> has become the de facto <code>Bitmap</code> implementation in systems such as Apache Lucene, Apache Druid, ClickHouse, InfluxDB, and many others.</p>
 <p>In this article, we'll explore the internal encoding strategies used in <code>RoaringBitmap</code>, how it compresses data, why these strategies are effective, and an example to see it in practice.</p>

@@ -43,6 +43,7 @@
 <section class="section">
     <div class="container content">
         <h1 class="title is-3 mb-2">Dive Deep Into ScheduledExecutorService’s Internals</h1>
+
         
         <div class="tags is-justify-content-start mb-0">
             
@@ -52,9 +53,13 @@
             
         </div>
         
+
         
         <p class="has-text-grey is-size-6 mt-0 mb-4">7 min read</p>
         
+
+        
+
         <p>Java's <code>ScheduledExecutorService</code> is the ultimate go-to solution when it comes to running task threads periodically or with a fixed (including a delay of 0) interval.</p>
 <p>But, have you ever wondered how this all works internally? Like how are different race conditions solved? Or how are tasks delayed for some time and picked up right when they are required?</p>
 <p>In this article, we delve into the internal mechanisms of this exceptional library. We explore the underlying data structures that support its functionality, uncover the strategies employed to handle race conditions, and examine the seamless coordination among multiple internal classes that ensures smooth operation.</p>
