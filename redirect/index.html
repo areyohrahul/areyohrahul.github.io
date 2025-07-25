@@ -66,9 +66,9 @@
     device: device
   });
 
-  if (!isMobile) {
-    // Instantly redirect on desktop
-    window.location.replace(mediumUrl); // faster and doesn't add to browser history
+  if (!isMobile && blogSlug) {
+    // Redirect to personal blog on desktop
+    window.location.replace(`/blogs/${blogSlug}`);
   }
 
   // MOBILE FLOW
