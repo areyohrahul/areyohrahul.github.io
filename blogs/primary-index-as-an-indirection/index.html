@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Why InnoDB Secondary Indexes Use the Primary Key as an Indirection?</title>
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"></noscript>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){ dataLayer.push(arguments); }
+      gtag('js', new Date());
+
+      gtag('config', 'G-RP3XSZXCG2');
+    </script>
+    
+<link rel="stylesheet" href="/blogs/css/content.css" />
+
+</head>
+<body>
+
+<nav class="navbar is-transparent">
+    <div class="container">
+        <div class="navbar-brand">
+            <a class="navbar-item is-size-3 has-text-weight-bold" href="/">Rahul Arora</a>
+            <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false" data-target="navMenu">
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+            </a>
+        </div>
+        <div id="navMenu" class="navbar-menu">
+            <div class="navbar-end">
+                <a class="navbar-item is-size-5" href="/blogs/index.html">Blogs</a>
+                <a class="navbar-item is-size-5" href="/reads/index.html">Reads</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+
+<section class="section">
+    <div class="container content">
+        <h1 class="title is-3 mb-2">Why InnoDB Secondary Indexes Use the Primary Key as an Indirection?</h1>
+
+        
+        <div class="tags is-justify-content-start mb-0">
+            
+            <span class="tag has-background-light has-text-dark">database</span>
+            
+            <span class="tag has-background-light has-text-dark">mysql</span>
+            
+        </div>
+        
+
+        
+        <p class="has-text-grey is-size-6 mt-0 mb-4">7 min read</p>
+        
+
+        
+        
+            
+            <div class="notification is-link is-light mt-1 mb-5">
+                This blog is based on insights from the book <strong>Database internals</strong>. Explore more<a href="/books/database-internals/" class="has-text-link ml-1">here</a>
+            </div>
+            
+        
+
+        <p>While diving into <a href="https://amzn.to/4luT4bC">Database Internals</a>, I stumbled upon an interesting design concept: using the <strong>primary key as an indirection</strong> for secondary indexes. Instead of pointing directly to row data on disk, a secondary index can point to the primary index, which then leads to the actual row.</p>
+<p>This sparked my curiosity, and I wondered why add this extra hop? What are the trade-offs? To answer that, I decided to explore how MySQL's InnoDB engine handles this and what it means for query performance, storage layout, and index tuning.</p>
+<p>Turns out, this indirection brings both clever optimizations and subtle pitfalls.</p>
+<p>Let's unpack it.</p>
+<hr />
+<h2>How InnoDB organizes data: The primary index</h2>
+<p>In InnoDB, every table is stored as a clustered B+ tree, ordered by its <strong>primary key</strong>. This means:</p>
+<ul>
+<li>The B+ tree is sorted by the primary key column(s)</li>
+<li>Each leaf node contains the full row data</li>
+<li>There's no separate heap. The table is the index</li>
+</ul>
+<p>To fetch a row using the primary key, InnoDB walks the tree until it reaches the appropriate leaf node and retrieves the row from there.</p>
+<h2>What about secondary indexes?</h2>
+<p>Secondary indexes are also B+ trees,  but ordered by a different column (or columns). However, instead of pointing directly to disk locations, the leaf nodes in secondary indexes store the primary key of the row.</p>
+<p>This is crucial: secondary indexes never contain the full row by default. Instead, InnoDB does the following:</p>
+<ol>
+<li>Traverse the secondary index to find the matching entry.</li>
+<li>Use the stored primary key to look up the row in the primary index.</li>
+<li>Retrieve the full row from there.</li>
+</ol>
+<p>Let's take an example:</p>
+<pre class="codehilite"><code class="language-SQL">CREATE TABLE users (
+  id INT PRIMARY KEY,
+  name VARCHAR(100),
+  age INT,
+  email VARCHAR(100)
+);
+
+CREATE INDEX idx_age ON users(age);
+</code></pre>
+
+<p>Now, if you query:</p>
+<pre class="codehilite"><code class="language-SQL">SELECT email FROM users WHERE age = 30;
+</code></pre>
+
+<p>Then InnoDB does the following things:</p>
+<ol>
+<li>Walks <code>idx_age</code> (secondary index) to find entries with <code>age = 30</code></li>
+<li>For each match, use the stored <code>id</code> to perform a second lookup in the primary index</li>
+<li>Finally, fetches the full row to extract <code>email</code></li>
+</ol>
+<p>That's a <strong>double read</strong>. One from <code>idx_age</code>, and one from the primary index.</p>
+<p>The following diagram is borrowed from the book itself. It will help you to visualize this better.</p>
+<p><img alt="" src="/blogs/primary-index-as-an-indirection/1.png" /></p>
+<hr />
+<h2>What are the pros and cons?</h2>
+<p>Using the primary key as an indirection in secondary indexes is a trade-off. Here are the key advantages and disadvantages to consider.</p>
+<p><strong>Pros</strong></p>
+<ol>
+<li>Row updates don't require modifying secondary index entries unless the PK changes. This is one of the major advantages of using this approach, especially on write-heavy systems.</li>
+<li>No redundancy of row data across indexes. Only the primary index stores full rows, reducing duplication.</li>
+</ol>
+<p><strong>Cons</strong></p>
+<ol>
+<li>Often, rows are not clustered by the secondary index order, hence PK lookups become random disk reads. This is especially more prominent when there are range scans on the secondary index.</li>
+<li>In a range scan, InnoDB walks the secondary index, and for each match, dereferences the primary index, which causes double I/O.</li>
+</ol>
+<hr />
+<h2>Common index optimizations to improve read performance</h2>
+<h3>Covering indexes</h3>
+<p>If your query can be answered entirely using the secondary index (i.e., all required columns are present in the index), InnoDB doesn't have to touch the primary index at all.
+Imagine you have a table like this:</p>
+<pre class="codehilite"><code class="language-SQL">CREATE TABLE users (
+  id INT PRIMARY KEY,
+  age INT,
+  name VARCHAR(100),
+  email VARCHAR(100)
+);
+</code></pre>
+
+<p>With an index like below:</p>
+<pre class="codehilite"><code class="language-SQL">CREATE INDEX idx_age ON users(age);
+</code></pre>
+
+<p>Now, if you run a query like below:</p>
+<pre class="codehilite"><code class="language-SQL">SELECT name FROM users WHERE age = 30;
+</code></pre>
+
+<p>This query requires accessing the primary index, because <code>name</code> is not part of the secondary index.</p>
+<p>On the other hand, if you define your index like below:</p>
+<pre class="codehilite"><code class="language-SQL">CREATE INDEX idx_age_name ON users(age, name);
+</code></pre>
+
+<p>Now the query becomes a <strong>covering query</strong>. Everything needed (<code>age</code>, <code>name</code>) is available in the index itself. Only one tree is touched.</p>
+<h3>INCLUDE columns (In MySQL 8.0+)</h3>
+<p>What if you want to include extra columns in the index without affecting the sort order?</p>
+<p>Use <code>INCLUDE</code>:</p>
+<pre class="codehilite"><code class="language-SQL">CREATE INDEX idx_age_include_email ON users(age) INCLUDE (email);
+</code></pre>
+
+<ul>
+<li>The index is still sorted by <code>age</code></li>
+<li><code>email</code> is included <strong>only in the leaf nodes</strong></li>
+<li>Useful for filtering on age while returning <code>email</code> -- No need to go to the primary index</li>
+</ul>
+<p>This helps keep the internal B+ tree structure compact while still enabling covering queries.</p>
+<h3>Tuning buffer pool</h3>
+<p>A secondary index lookup in InnoDB is often said to require two I/Os per row: one for the secondary index and one for the primary index. But this is an oversimplification. Since both indexes are B+ trees, each lookup may involve multiple I/Os to traverse internal and leaf pages,  especially if they're not cached.</p>
+<p>These disk reads can be significantly reduced if the InnoDB buffer pool is large enough to hold a good portion of your frequently accessed index pages and row data.</p>
+<hr />
+<h2>Ending notes</h2>
+<p>Understanding how InnoDB uses the primary key as an indirection in secondary indexes helps demystify some of the performance quirks you might observe in real-world queries.</p>
+<p>Behind the scenes, this indirection adds flexibility and write efficiency, but it also introduces an extra hop in the read path. Knowing how this works under the hood can help you design better indexes and write more efficient SQL.</p>
+<p>I regularly read a wide range of technical books and share my learnings <a href="/books">here</a>, whether it's database internals, system design, or just clever engineering ideas. Feel free to explore the rest of the blogs if that sounds interesting to you.</p>
+<p>References:</p>
+<p><a href="https://en.wikipedia.org/wiki/B%2B_tree">https://en.wikipedia.org/wiki/B%2B_tree</a><br />
+<a href="https://dev.mysql.com/doc/refman/8.4/en/innodb-index-types.html">https://dev.mysql.com/doc/refman/8.4/en/innodb-index-types.html</a><br /></p>
+<p>Thank you for reading.</p>
+<p>Happy coding!</p>
+    </div>
+</section>
+
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const $burger = document.querySelector('.navbar-burger');
+      const $menu = document.querySelector('#navMenu');
+      $burger.addEventListener('click', () => {
+        $burger.classList.toggle('is-active');
+        $menu.classList.toggle('is-active');
+      });
+    });
+  </script>
+</body>
+</html>

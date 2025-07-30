@@ -19,6 +19,12 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://www.rahularora.me/blogs/primary-index-as-an-indirection/index.html</loc>
+    <lastmod>2025-07-30</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://www.rahularora.me/blogs/log4j-java-optimisation/index.html</loc>
     <lastmod>2025-07-30</lastmod>
     <changefreq>monthly</changefreq>
