@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Why does MySQL use B-Trees instead of Binary Trees?</title>
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"></noscript>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){ dataLayer.push(arguments); }
+      gtag('js', new Date());
+
+      gtag('config', 'G-RP3XSZXCG2');
+    </script>
+    
+<link rel="stylesheet" href="/blogs/css/content.css" />
+
+</head>
+<body>
+
+<nav class="navbar is-transparent">
+    <div class="container">
+        <div class="navbar-brand">
+            <a class="navbar-item is-size-3 has-text-weight-bold" href="/">Rahul Arora</a>
+            <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false" data-target="navMenu">
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+            </a>
+        </div>
+        <div id="navMenu" class="navbar-menu">
+            <div class="navbar-end">
+                <a class="navbar-item is-size-5" href="/blogs/index.html">Blogs</a>
+                <a class="navbar-item is-size-5" href="/reads/index.html">Reads</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+
+<section class="section">
+    <div class="container content">
+        <h1 class="title is-3 mb-2">Why does MySQL use B-Trees instead of Binary Trees?</h1>
+
+        
+        <div class="tags is-justify-content-start mb-0">
+            
+            <span class="tag has-background-light has-text-dark">database</span>
+            
+        </div>
+        
+
+        
+        <p class="has-text-grey is-size-6 mt-0 mb-4">5 min read</p>
+        
+
+        
+        
+            
+            <div class="notification is-link is-light mt-1 mb-5">
+                This blog is based on insights from the book <strong>Database internals</strong>. Explore more<a href="/books/database-internals/" class="has-text-link ml-1">here</a>
+            </div>
+            
+        
+
+        <p>While reading <a href="https://amzn.to/4luT4bC">Database Internals</a>, I came across an answer to a question I'd always wondered: Why does MySQL (specifically InnoDB) use B+ Trees instead of Binary Trees?</p>
+<p>In this post, we'll explore:</p>
+<ul>
+<li>How InnoDB uses B+ Trees</li>
+<li>Why binary trees don't work well for databases</li>
+<li>How B+ Trees solve those problems</li>
+</ul>
+<p>Let's dive in.</p>
+<hr />
+<h2>What is a B+ Tree (quick refresher)?</h2>
+<p>A B+ Tree is a self-balancing n-ary tree structure, meaning each node can have many children,  not just two, like in a binary tree.</p>
+<p>Key properties:</p>
+<ul>
+<li>Internal nodes store only keys.</li>
+<li>Leaf nodes store the actual data (or pointers to data).</li>
+<li>Leaf nodes are linked for fast range scans.</li>
+<li>High fanout (hundreds of children per node) keeps the tree shallow.</li>
+</ul>
+<p>You could refer to the image given below to get an idea of how it looks:</p>
+<p><img alt="" src="/blogs/b-trees-vs-binary-trees-in-mysql-innodb/1.png" /></p>
+<hr />
+<h2>How does InnoDB use B+ Trees?</h2>
+<p>In InnoDB, every table is stored as a clustered B+ tree, ordered by its <strong>primary key</strong>. This means:</p>
+<ul>
+<li>The B+ tree is sorted by the primary key column(s)</li>
+<li>Each leaf node contains the full row data</li>
+<li>There's no separate heap. The table is the index</li>
+</ul>
+<p>To fetch a row using the primary key, InnoDB walks the tree until it reaches the appropriate leaf node and retrieves the row from there.</p>
+<p>Secondary indexes are also B+ Trees but store the indexed column(s) plus a pointer to the primary key. (I've written more on secondary indexes <a href="/blogs/primary-index-as-an-indirection">here</a>)</p>
+<hr />
+<h2>Why binary trees don't work well for InnoDB?</h2>
+<p>Binary trees are great in-memory structures, but they fall short for on-disk storage for the following reasons:</p>
+<h3>1. Poor data locality</h3>
+<p>Each node is small and typically placed separately on disk. This means following a parent-to-child pointer may jump across multiple disk pages, causing random I/O.</p>
+<h3>2. Low Fanout = Tall Trees</h3>
+<p>With only two children per node, binary trees grow tall quickly. To locate a row, the database might have to read log₂(n) pages. This is not ideal when each read means a disk seek.</p>
+<h3>3. Rebalancing is Costly</h3>
+<p>Binary trees are more likely to become unbalanced, especially with insert-heavy workloads. To maintain balance, the tree structure must be adjusted often,  which, on disk, means reading and rewriting multiple nodes across different pages. This leads to a lot of random I/O.</p>
+<hr />
+<h2>How do B+ Trees solve this problem?</h2>
+<p>B+ Trees were designed specifically to address the limitations of binary trees in disk-based systems. They offer several advantages that make them ideal for database indexes:</p>
+<h3>1. Better Data Locality</h3>
+<p>B+ Trees store multiple keys per node, and each node fits neatly into a disk page. This improves cache performance and reduces random I/O, as traversals touch fewer pages and stay within contiguous blocks more often.</p>
+<h3>2. High Fanout = Shallow Trees</h3>
+<p>Each node in a B+ Tree can store hundreds of keys (depending on the row and page size). This means the tree remains very shallow, even with millions of rows,  usually just 3 to 4 levels deep. Fewer levels = fewer disk reads during lookups.</p>
+<h3>3. Less Frequent Rebalancing</h3>
+<p>Thanks to their high fanout, B+ Trees stay balanced naturally and require far fewer restructuring operations than binary trees. This reduces the  I/O overhead.</p>
+<h3>4. Efficient Range Queries</h3>
+<p>Since all data is stored in the leaf nodes, and these leaves are linked like a linked list, range scans (e.g., <code>WHERE age BETWEEN 20 AND 30</code>) can be performed sequentially, without going back up the tree.</p>
+<hr />
+<h2>Ending notes</h2>
+<p>In this article, we explored why databases like MySQL's InnoDB use B+ Trees instead of binary trees.</p>
+<p>I encourage the readers to explore more on the same. Here are some references:</p>
+<p><a href="https://dev.mysql.com/doc/refman/8.4/en/innodb-physical-structure.html">https://dev.mysql.com/doc/refman/8.4/en/innodb-physical-structure.html</a><br />
+<a href="https://blog.jcole.us/2013/01/10/btree-index-structures-in-innodb/https://planetscale.com/blog/btrees-and-database-indexes">https://blog.jcole.us/2013/01/10/btree-index-structures-in-innodb/https://planetscale.com/blog/btrees-and-database-indexes</a><br /></p>
+<p>I regularly read a wide range of technical books and share my learnings <a href="/books">here</a>, whether it's database internals, system design, or just clever engineering ideas. Feel free to explore the rest of the blogs if that sounds interesting to you.</p>
+<p>Thank you for reading.</p>
+<p>Happy coding!</p>
+    </div>
+</section>
+
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const $burger = document.querySelector('.navbar-burger');
+      const $menu = document.querySelector('#navMenu');
+      $burger.addEventListener('click', () => {
+        $burger.classList.toggle('is-active');
+        $menu.classList.toggle('is-active');
+      });
+    });
+  </script>
+</body>
+</html>
