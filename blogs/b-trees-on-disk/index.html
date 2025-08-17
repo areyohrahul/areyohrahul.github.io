@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>What You Should Know About B-Trees on Disk (But Probably Don't)</title>
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"></noscript>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){ dataLayer.push(arguments); }
+      gtag('js', new Date());
+
+      gtag('config', 'G-RP3XSZXCG2');
+    </script>
+    
+<link rel="stylesheet" href="/blogs/css/content.css" />
+
+</head>
+<body>
+
+<nav class="navbar is-transparent">
+    <div class="container">
+        <div class="navbar-brand">
+            <a class="navbar-item is-size-3 has-text-weight-bold" href="/">Rahul Arora</a>
+            <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false" data-target="navMenu">
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+            </a>
+        </div>
+        <div id="navMenu" class="navbar-menu">
+            <div class="navbar-end">
+                <a class="navbar-item is-size-5" href="/blogs/index.html">Blogs</a>
+                <a class="navbar-item is-size-5" href="/reads/index.html">Reads</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+
+<section class="section">
+    <div class="container content">
+        <h1 class="title is-3 mb-2">What You Should Know About B-Trees on Disk (But Probably Don't)</h1>
+
+        
+        <div class="tags is-justify-content-start mb-0">
+            
+            <span class="tag has-background-light has-text-dark">database</span>
+            
+        </div>
+        
+
+        
+        <p class="has-text-grey is-size-6 mt-0 mb-4">9 min read</p>
+        
+
+        
+        
+            
+            <div class="notification is-link is-light mt-1 mb-5">
+                This blog is based on insights from the book <strong>Database internals</strong>. Explore more<a href="/books/database-internals/" class="has-text-link ml-1">here</a>
+            </div>
+            
+        
+
+        <p>While reading <a href="https://amzn.to/4luT4bC">Database Internals</a>, I realized that I had always pictured B-Trees as purely in-memory data structures. But in reality, most production databases store B-Trees on disk, not in RAM.</p>
+<p>It might seem simple, but pointer management works very differently on disk than in memory. That insight sparked my curiosity, so I dug deeper into how B-Trees are actually laid out on disk. In this article, I'll walk you through the core concepts and general strategies most disk-based B-Tree implementations follow. While specifics vary across databases, the foundational ideas remain widely shared.</p>
+<p>If you like to deep-dive into database internals, then you are going to love this. Let's begin.</p>
+<hr />
+<h2>General principles</h2>
+<p>Before diving into B-Trees, let's zoom out and look at how databases store data on disk.</p>
+<p>Most databases use a set of structured files, typically divided into two broad types: <strong>data files</strong>, which store the actual records, and <strong>index files</strong>, which help locate those records efficiently. While formats can vary, these files usually follow a common high-level structure, which is shown in the image given below:</p>
+<p><img alt="" src="/blogs/b-trees-on-disk/1.png" /></p>
+<ul>
+<li><strong>Header</strong>: A fixed-size section at the beginning of the file that contains metadata,  such as file format version, page size, and sometimes checksums.</li>
+<li><strong>Pages</strong>: The bulk of the file consists of fixed-size pages (usually 4 KB to 16 KB) that store actual data or index entries. Each page may follow its own internal layout.</li>
+<li><strong>Trailer</strong>: Some formats include a trailer at the end of the file, which may store checksums, footers, or other metadata used for integrity or versioning.</li>
+</ul>
+<p>Now that we've covered the outer structure, let's zoom in on the page itself, the unit where the interesting stuff happens.</p>
+<hr />
+<h2>Page structure</h2>
+<p>As we just saw, data is stored in fixed-size units called pages,  typically 4 to 16 KB each. In most database systems, each B-Tree node is stored within a single page, so the terms node and page are often used interchangeably in this context.</p>
+<p>Before diving into how these pages are physically laid out, here's a quick refresher on the logical structure of a B-Tree node, based on the original <a href="https://infolab.usc.edu/csci585/Spring2010/den_ar/indexing.pdf">B-Tree design from the academic literature</a>:</p>
+<p><img alt="" src="/blogs/b-trees-on-disk/2.png" /></p>
+<p>In this structure, each node is essentially a list of triplets: Key (K), Value (V), and Pointer (P) to child pages. The key acts as a separator, the value holds the associated data, and the pointer links to a child page. The same is shown in the image given below at the page level:</p>
+<p><img alt="" src="/blogs/b-trees-on-disk/3.png" /></p>
+<blockquote>
+<p>Note that this is a classic B-Tree, not a B+ Tree, which means the data records can live in internal nodes,  not just the leaves.</p>
+</blockquote>
+<p>While conceptually simple, this layout has two big downsides:</p>
+<ul>
+<li>Insertions in the middle of the node require shifting many elements to maintain order.</li>
+<li>It struggles with variable-sized records, since everything is tightly packed with no room to grow or move flexibly.</li>
+</ul>
+<hr />
+<h2>Enter, slotted pages</h2>
+<p>The B-Tree layout we saw earlier works fine for fixed-size keys and values, but it struggles with variable-sized records,  which are common in real databases. The core issue is that when record sizes vary, it becomes difficult to predict how many will fit in a page. Overestimating wastes space (internal fragmentation); underestimating leads to frequent splits or overflows.</p>
+<p>Some databases try to clean up fragmented pages periodically using background processes (similar to garbage collection). But compacting a page can become tricky if other pages hold direct references to record offsets, as this would require updating those references too, which could be an expensive operation.</p>
+<p>To make variable-sized records easier to manage, many modern databases adopt a layout called the <strong>slotted page</strong>. Here's what that looks like conceptually:</p>
+<p><img alt="" src="/blogs/b-trees-on-disk/4.png" /></p>
+<p>In this structure, we organise the page into the following components:</p>
+<ul>
+<li><strong>Page Header</strong>: A fixed-size section at the top that stores metadata about the page,  like the number of records, space usage, etc.</li>
+<li><strong>Cells (Records)</strong>: The actual data entries, which may include key-value pairs, pointers, or other payloads.</li>
+<li><strong>Slot Directory (Pointers)</strong>: A list of offsets pointing to the location of each cell within the page.</li>
+</ul>
+<p>Pointers and cells are split into two different regions, at the extreme ends, which makes the cells grow from one end of the page, while pointers grow from the other. This also means that we only need to preserve the order of pointers in this page and not the cells themselves to be able to do an efficient lookup. Deleting a record just means removing or nullifying its pointer. The actual cell can be cleaned up later.</p>
+<p>Let's see a quick example to understand this better. Suppose we have a page storing two variable-sized strings -- <strong>"Leslie"</strong> and <strong>"Tom"</strong> -- inserted in sorted order. Using a slotted page layout, this could be visualized as shown in the image below:</p>
+<p><img alt="" src="/blogs/b-trees-on-disk/5.png" /></p>
+<p>Now let's say we insert another name: <strong>"Ron"</strong>. The actual record for "Ron" is placed in the free space region between the pointer table and the existing cells. This might make the physical layout of cells appear unordered as shown in the image given below:</p>
+<p><img alt="" src="/blogs/b-trees-on-disk/6.png" /></p>
+<p>But here's the key: the pointers are always kept sorted. So even if the records are scattered across the page, binary search over the sorted pointers still works efficiently.</p>
+<hr />
+<h2>Recollecting wasted space</h2>
+<p>In real-world workloads, data isn't just read and written; it's also frequently deleted. Consider a page that once held several records. Over time, some of those records may be removed, leaving behind gaps in the cell region. This situation could be visualised in the image below:</p>
+<p><img alt="" src="/blogs/b-trees-on-disk/7.png" /></p>
+<p>These gaps aren't wasted; the database tracks them using a structure called an <strong>availability list</strong>, which is a list of free spaces within the page. When new data needs to be inserted, the system consults this list to find a suitable spot instead of always appending at the end.</p>
+<p>The strategy used to pick a spot can vary, but at a high level, it's often something simple like first-fit (the first available space that fits the record) or best-fit (the smallest available space that fits the record without wasting much).</p>
+<hr />
+<h2>Cell layout</h2>
+<p>In this section, we will see how the cells are laid out in a B+-Tree page. In B+-Tree pages, there are broadly two types of cells:</p>
+<ul>
+<li><strong>Key cells</strong>: Used in internal (non-leaf) pages. They store a separator key and a pointer (typically a page ID) to the child page that falls between two neighboring keys.</li>
+<li><strong>Key-value cells</strong>: Used in leaf pages. These store the key along with the associated data record (the value).</li>
+</ul>
+<p>The layout for the key cells looks like this:</p>
+<p><img alt="" src="/blogs/b-trees-on-disk/8.png" /></p>
+<p>Here:</p>
+<ul>
+<li><code>key_size</code> helps determine how many bytes the key spans.</li>
+<li><code>page_id</code> points to the child page.</li>
+<li><code>key</code> is the actual separator key used for navigation.</li>
+</ul>
+<p>By grouping fixed-size fields at the beginning, databases can parse these cells more efficiently before reading the variable-length key.</p>
+<p>Now, let's look at a key-value cell, which typically appears in leaf pages. Its layout is as follows:</p>
+<p><img alt="" src="/blogs/b-trees-on-disk/9.png" /></p>
+<p>Here:</p>
+<ul>
+<li><code>key_size</code> tells us the length of the key.</li>
+<li><code>value_size</code> specifies the length of the data record (value).</li>
+<li><code>key</code> is the actual key used for lookup.</li>
+<li><code>data_record</code> is the value associated with the key.</li>
+</ul>
+<p>Just like in key cells, the fixed-size fields (<code>key_size</code> and <code>value_size</code>) come first, followed by the variable-length fields. This design allows efficient parsing and scanning, even with variable-sized keys and values.</p>
+<hr />
+<h2>Ending notes</h2>
+<p>We started with the basics of B-Trees and looked at how things change when they're stored on disk instead of in memory. From slotted pages to availability lists and how cells are laid out, there's a lot more going on than it might seem at first.</p>
+<p>Thank you for reading.</p>
+<p>I regularly read a wide range of technical books and share my learnings <a href="/books">here</a>, whether it's database internals, system design, or just clever engineering ideas. Feel free to explore the rest of the blogs if that sounds interesting to you.</p>
+<p>Thank you for reading.</p>
+<p>Happy coding!</p>
+    </div>
+</section>
+
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const $burger = document.querySelector('.navbar-burger');
+      const $menu = document.querySelector('#navMenu');
+      $burger.addEventListener('click', () => {
+        $burger.classList.toggle('is-active');
+        $menu.classList.toggle('is-active');
+      });
+    });
+  </script>
+</body>
+</html>
