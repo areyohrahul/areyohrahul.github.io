@@ -62,11 +62,15 @@
   const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   const device = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ? "mobile" : "desktop";
 
-  gtag('event', 'redirect_landed', {
-    event_category: 'redirect_page',
-    blog: blogSlug || 'unknown',
-    device: device
-  });
+  let emitButtonClickEvent = false;
+
+  if (!emitButtonClickEvent) {
+      gtag('event', 'redirect_landed', {
+        event_category: 'redirect_page',
+        blog: blogSlug || 'unknown',
+        device: device
+      });
+  }
 
   if (!isMobile && blogSlug) {
     // Redirect to personal blog on desktop
@@ -76,7 +80,6 @@
   // MOBILE FLOW
   const mediumLink = document.getElementById("medium-link");
   const mobileContent = document.getElementById("mobile-content");
-  let emitButtonClickEvent = true;
   let userClicked = false;
 
   mobileContent.style.display = "block";
@@ -84,7 +87,7 @@
   const clickStart = Date.now();
   mediumLink.href = mediumUrl;
   mediumLink.addEventListener("click", () => {
-    if (!emitButtonClickEvent) return; // Prevent multiple emissions
+    if (emitButtonClickEvent) return; // Prevent multiple emissions
     const timeToClick = Math.round((Date.now() - clickStart) / 1000);
     gtag('event', 'redirect_button_clicked', {
       event_category: 'redirect_page',
@@ -93,7 +96,7 @@
       time_to_click: timeToClick
     });
     userClicked = true;
-    emitButtonClickEvent = false;
+    emitButtonClickEvent = true;
   });
 
   if (blogSlug) {
@@ -104,7 +107,7 @@
             blog: blogSlug,
             device: device
         });
-        emitButtonClickEvent = false;
+        emitButtonClickEvent = true;
         window.location.href = `/blogs/${blogSlug}`;
       }
     }, 3000);
