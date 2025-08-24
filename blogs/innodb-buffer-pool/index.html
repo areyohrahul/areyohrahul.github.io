@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>InnoDB Doesn’t Use a Regular LRU — Here’s Its Secret</title>
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"></noscript>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){ dataLayer.push(arguments); }
+      gtag('js', new Date());
+
+      gtag('config', 'G-RP3XSZXCG2');
+    </script>
+    
+<link rel="stylesheet" href="/blogs/css/content.css" />
+
+</head>
+<body>
+
+<nav class="navbar is-transparent">
+    <div class="container">
+        <div class="navbar-brand">
+            <a class="navbar-item is-size-3 has-text-weight-bold" href="/">Rahul Arora</a>
+            <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false" data-target="navMenu">
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+            </a>
+        </div>
+        <div id="navMenu" class="navbar-menu">
+            <div class="navbar-end">
+                <a class="navbar-item is-size-5" href="/blogs/index.html">Blogs</a>
+                <a class="navbar-item is-size-5" href="/reads/index.html">Reads</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+
+<section class="section">
+    <div class="container content">
+        <h1 class="title is-3 mb-2">InnoDB Doesn’t Use a Regular LRU — Here’s Its Secret</h1>
+
+        
+        <div class="tags is-justify-content-start mb-0">
+            
+            <span class="tag has-background-light has-text-dark">database</span>
+            
+        </div>
+        
+
+        
+        <p class="has-text-grey is-size-6 mt-0 mb-4">6 min read</p>
+        
+
+        
+        
+            
+            <div class="notification is-link is-light mt-1 mb-5">
+                This blog is based on insights from the book <strong>Database internals</strong>. Explore more<a href="/books/database-internals/" class="has-text-link ml-1">here</a>
+            </div>
+            
+        
+
+        <p>While reading <a href="https://amzn.to/4luT4bC">Database Internals</a>, I discovered that database engines often cache recently accessed pages of index and data files in memory. This speeds up not just reads, but writes too.</p>
+<p>That got me curious about how InnoDB does it -- and it turns out, it's far from a basic LRU cache. InnoDB adds a smart twist that makes its buffer pool resistant to full table scans and short-lived page accesses that otherwise pollute the cache.</p>
+<p>In this article, I'll walk through how InnoDB's buffer pool works under the hood, how it improves on traditional LRU, and how you can tune it for better performance. If you enjoy exploring the internals of real-world systems, this one's for you.</p>
+<hr />
+<h2>What's a buffer pool (a quick refresher)?</h2>
+<p>The buffer pool is InnoDB's in-memory cache. It stores frequently accessed pages from your database files -- both index and data pages.</p>
+<p>It serves two major performance goals:</p>
+<ul>
+<li><strong>Speeding up reads</strong>: If a requested page is already in memory, there's no need to read it from disk.</li>
+<li><strong>Optimizing writes</strong>: When you write data, it's first stored in the buffer pool and later flushed to disk in batches. This reduces disk I/O and improves throughput.</li>
+</ul>
+<p>Behind the scenes, this pool is managed by a cache eviction strategy, which is a variant of LRU.</p>
+<hr />
+<h2>How basic LRU works (and why it fails)?</h2>
+<p>A traditional LRU cache uses two data structures:</p>
+<ul>
+<li>A <strong>hash map</strong> that maps keys (like page IDs) to nodes. Each node contains the actual page data.</li>
+<li>A <strong>doubly linked list</strong> to track usage order. When a page is accessed, its node is moved to the head of the list. The least recently used pages drift toward the tail.</li>
+</ul>
+<p>When the cache is full, pages near the tail (least recently used) are evicted first.</p>
+<p>This works well in many systems,  but not for databases.</p>
+<p><strong>The problem: cache pollution</strong></p>
+<p>Let's say someone runs a full table scan by mistake. Suddenly, hundreds of pages that may never be accessed again flood the buffer pool. In basic LRU, each newly accessed page goes to the head of the list, pushing older, more useful "hot" pages toward eviction.</p>
+<p>Another case is read-ahead. InnoDB detects sequential access patterns (for example, range queries) and prefetches nearby pages. But if you're running an ad hoc analytical query once a day, those prefetched pages will still take up cache space even if they're never touched again.</p>
+<p>So, how do we prevent these one-time-use pages from evicting frequently used ones? -- Let's see in the next section.</p>
+<hr />
+<h2>Innodb's solution: Midpoint insertion LRU</h2>
+<p>InnoDB solves this problem using a midpoint insertion strategy, splitting the LRU list into two logical regions:</p>
+<ul>
+<li><strong>Old region</strong> (by default, 37% of the buffer pool)</li>
+<li><strong>New region</strong> (the remaining 63%)</li>
+</ul>
+<p>Refer to the image below to see how it looks:</p>
+<p><img alt="" src="/blogs/innodb-buffer-pool/1.png" /></p>
+<p>Instead of inserting new pages at the head of the list, InnoDB places them somewhere in the middle, in a region known as the old region. This region starts at a configurable point in the LRU list. By default, at the 3/8th mark, set via the <code>innodb_old_blocks_pct</code> parameter.</p>
+<p>Pages in the old region are considered cold and are eligible for eviction unless they prove themselves.</p>
+<p>Only if the page is accessed again after a short delay is it moved to the new region, where it's treated as hot and protected from eviction. This delay is controlled by the <code>innodb_old_blocks_time</code> setting (default: 1000 milliseconds).</p>
+<h2>How this helps</h2>
+<p>This change is surprisingly effective:</p>
+<ul>
+<li><strong>Pages accessed only once</strong> (like during table scans or prefetches) die in the old region without polluting the hot cache.</li>
+<li><strong>Pages accessed repeatedly over time</strong> migrate to the new region and stay cached.</li>
+</ul>
+<p>In other words, InnoDB rewards sustained relevance, not short-term bursts.</p>
+<hr />
+<h2>Ending notes</h2>
+<p>Before diving into this, I assumed InnoDB used a plain LRU cache, nothing fancy. But digging into the details changed my perspective.</p>
+<p>What looks like a minor implementation detail has a huge impact on real-world database behavior.</p>
+<p>Understanding this helped me appreciate how much thought goes into storage engine design. I hope it helped you too. I encourage curious readers to go through the following references to know more about the same.</p>
+<p>References:</p>
+<p><a href="https://dev.mysql.com/doc/refman/8.4/en/innodb-buffer-pool.html">https://dev.mysql.com/doc/refman/8.4/en/innodb-buffer-pool.html</a><br />
+<a href="https://dev.mysql.com/doc/refman/8.4/en/innodb-performance-midpoint_insertion.html">https://dev.mysql.com/doc/refman/8.4/en/innodb-performance-midpoint_insertion.html</a><br />
+<a href="https://dev.mysql.com/doc/refman/8.0/en/innodb-disk-io.html">https://dev.mysql.com/doc/refman/8.0/en/innodb-disk-io.html</a><br />
+<a href="https://www.alibabacloud.com/blog/an-in-depth-analysis-of-buffer-pool-in-innodb_601216">https://www.alibabacloud.com/blog/an-in-depth-analysis-of-buffer-pool-in-innodb_601216</a><br /></p>
+<p>Thank you for reading.</p>
+<p>I regularly read a wide range of technical books and share my learnings <a href="/books">here</a>, whether it's database internals, system design, or just clever engineering ideas. Feel free to explore the rest of the blogs if that sounds interesting to you.</p>
+<p>Thank you for reading.</p>
+<p>Happy coding!</p>
+    </div>
+</section>
+
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const $burger = document.querySelector('.navbar-burger');
+      const $menu = document.querySelector('#navMenu');
+      $burger.addEventListener('click', () => {
+        $burger.classList.toggle('is-active');
+        $menu.classList.toggle('is-active');
+      });
+    });
+  </script>
+</body>
+</html>
