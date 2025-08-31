@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Everyone Talks About B+ Trees, But Do You Know the Bw-Tree?</title>
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"></noscript>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){ dataLayer.push(arguments); }
+      gtag('js', new Date());
+
+      gtag('config', 'G-RP3XSZXCG2');
+    </script>
+    
+<link rel="stylesheet" href="/blogs/css/content.css" />
+
+</head>
+<body>
+
+<nav class="navbar is-transparent">
+    <div class="container">
+        <div class="navbar-brand">
+            <a class="navbar-item is-size-3 has-text-weight-bold" href="/">Rahul Arora</a>
+            <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false" data-target="navMenu">
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+            </a>
+        </div>
+        <div id="navMenu" class="navbar-menu">
+            <div class="navbar-end">
+                <a class="navbar-item is-size-5" href="/blogs/index.html">Blogs</a>
+                <a class="navbar-item is-size-5" href="/reads/index.html">Reads</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+
+<section class="section">
+    <div class="container content">
+        <h1 class="title is-3 mb-2">Everyone Talks About B+ Trees, But Do You Know the Bw-Tree?</h1>
+
+        
+        <div class="tags is-justify-content-start mb-0">
+            
+            <span class="tag has-background-light has-text-dark">database</span>
+            
+        </div>
+        
+
+        
+        <p class="has-text-grey is-size-6 mt-0 mb-4">7 min read</p>
+        
+
+        
+        
+            
+            <div class="notification is-link is-light mt-1 mb-5">
+                This blog is based on insights from the book <strong>Database internals</strong>. Explore more<a href="/books/database-internals/" class="has-text-link ml-1">here</a>
+            </div>
+            
+        
+
+        <p>B+ Trees have powered databases for decades, but they weren’t built with today’s hardware in mind. Enter the Bw-Tree, a modern, latch-free alternative designed for high-concurrency environments like SSDs and in-memory systems. While it may look similar to a B+ Tree at first glance, its underlying mechanics are fundamentally different.</p>
+<p>If you’re curious about how Bw-Trees improve write performance, reduce contention, and exploit modern CPU architectures, this post breaks it down with examples and visuals. Let’s dive in.</p>
+<hr />
+<h2>What is a Bw-Tree?</h2>
+<p>The Bw-Tree (short for “Buzz Word Tree”) is a lock-free, high-performance variant of the B+ Tree. It was developed to avoid the pitfalls of traditional tree structures on modern multi-core systems and SSDs. Conceptually, it’s still a balanced tree, but the way it handles updates, concurrency, and memory is completely reimagined.</p>
+<p>Let’s walk through some of the key components that make it different.</p>
+<p>BTW, if you want to know more about B+ Trees on disk, then read <a href="/blogs/b-trees-on-disk/">this</a> article of mine.</p>
+<p><strong>The mapping table: Decoupling pointers from data</strong></p>
+<p>Unlike a B+ Tree, which uses direct pointers between nodes, a Bw-Tree introduces an indirection layer through a <strong>mapping table</strong>.</p>
+<ul>
+<li>Each node is identified by a logical ID.</li>
+<li>The mapping table maps these IDs to physical memory addresses.</li>
+<li>When a node moves, you only update the mapping table, not the tree structure.</li>
+<li>This update happens through CAS operations, which are atomic CPU instructions that let you safely replace memory content without locks. Because of this, Bw-Trees can update mappings without blocking other threads.</li>
+</ul>
+<p>It can be visualised in the image given below:</p>
+<p><img alt="" src="/blogs/bw-trees/1.png" /></p>
+<p>The advantage of a mapping table is that you avoid the need to update multiple pointers, eliminate lock contention, and keep all node access indirect, making the structure safer and faster under concurrency.</p>
+<p><strong>Delta records: Log-structured updates on top of data</strong></p>
+<p>Rather than modifying nodes directly, Bw-Trees append <strong>delta records</strong> for each update (insert, delete, or modify). These records are linked in a chain above the original node (called the <strong>base record</strong>).</p>
+<p>For example, suppose you insert key <code>42</code>. Instead of modifying the leaf node directly, a delta record like <code>Insert(42)</code> is created. This delta is prepended to the node’s delta chain. This entire arrangement looks something like below:</p>
+<p><img alt="" src="/blogs/bw-trees/2.png" /></p>
+<p>Over time, this creates a stack of changes. When a read is performed, the tree traverses the delta chain and reconstructs the final view of the data.</p>
+<p>To keep read performance in check, delta chains are periodically consolidated into a new base record. This process is similar to compaction in log-structured systems, as it rewrites scattered deltas into a single, coherent snapshot. This process is represented in the image given below:</p>
+<p><img alt="" src="/blogs/bw-trees/3.png" /></p>
+<p>Now that we have understood the high-level working of a Bw-Tree, let’s understand in what terms it is better than a B-Tree in the next section.</p>
+<hr />
+<h2>How Bw-Trees outperform B+ Trees</h2>
+<p>Let’s break down the performance gains that Bw-Trees offer over traditional B+ Trees.</p>
+<p><strong>No latches, no contention</strong></p>
+<p>B+ Trees use latches (locks) to ensure correctness during concurrent access. On multi-core systems, this becomes a bottleneck.</p>
+<p>Bw-Trees sidestep this entirely. Since updates go into delta records and existing pages aren’t changed in place, there’s no need to lock them. CAS handles synchronization, enabling lock-free concurrency.</p>
+<p><strong>Better CPU cache behavior</strong></p>
+<p>Here’s a subtle but important performance issue in B+ Trees:</p>
+<p>When multiple threads access and modify shared nodes, CPU cache lines are invalidated across cores (due to the MESI protocol).
+This leads to frequent cache misses and slow memory reads.
+Bw-Trees avoid this by treating all nodes as immutable. Updates go into new delta records, which are stored separately. As a result, Bw-Trees experience fewer cache invalidations and maintain better CPU cache locality.</p>
+<p>(For a deep dive on this, see <a href="/blogs/false-sharing-problem/">my earlier post on CPU cache behavior</a>).</p>
+<p><strong>Lower write amplification</strong></p>
+<p>In B+ Trees, even a one-byte update means writing the full page back to disk. This leads to high write amplification.</p>
+<p>Bw-Trees reduce this in several ways:</p>
+<ul>
+<li>Writes go to small delta records, not full pages.</li>
+<li>These records are buffered in memory.</li>
+<li>When the buffer fills up, delta records are batched and flushed sequentially, amortizing the I/O cost.</li>
+</ul>
+<p>This design makes Bw-Trees especially well-suited for SSDs, where sequential writes are much faster than random ones.</p>
+<hr />
+<h2>Limitations of Bw-Trees</h2>
+<p>Like any system, Bw-Trees come with trade-offs.</p>
+<p><strong>Read path overhead</strong></p>
+<p>Delta records speed up writes, but they make reads more expensive. Reconstructing the actual data from a chain of deltas can involve multiple memory/disk lookups and CPU cycles. It is more prominent when chains get long.</p>
+<p><strong>Consolidation cost</strong></p>
+<p>Periodic delta chain consolidation is necessary for performance and storage efficiency. However, this process is I/O- and CPU-intensive, particularly under write-heavy workloads.</p>
+<p>It’s similar to garbage collection, necessary but not free.</p>
+<p><strong>CAS retries under contention</strong></p>
+<p>CAS is lock-free but not contention-free. If multiple threads try to update the same node ID simultaneously, CAS may fail and require retries. In high-contention scenarios, this can affect throughput.</p>
+<hr />
+<h2>Ending notes</h2>
+<p>The world of databases is really fascinating. I learned a lot of new things while learning about the Bw trees. While this post scratches the surface, I highly recommend going deeper if you’re working on high-performance storage systems or enjoy diving into database internals.</p>
+<p>Here are some great starting points:</p>
+<p><a href="https://www.youtube.com/watch?v=Pr-b9stpAV4&ab_channel=UWDatabaseGroup">https://www.youtube.com/watch?v=Pr-b9stpAV4&amp;ab_channel=UWDatabaseGroup</a><br />
+<a href="https://drive.google.com/file/d/1IMGXQ5exYx5PbiAInPH8tbXRbUclhzyn/view?usp=sharing">https://drive.google.com/file/d/1IMGXQ5exYx5PbiAInPH8tbXRbUclhzyn/view?usp=sharing</a><br /></p>
+<p>I regularly read a wide range of technical books and share my learnings here, whether it’s database internals, system design, or just clever engineering ideas. Feel free to explore the rest of the blogs if that sounds interesting to you.</p>
+<p>Thank you for reading.</p>
+<p>If you found this deep dive helpful, follow me for more posts like this, where I unpack the internal workings of various things, one concept at a time.</p>
+<p>Happy coding!</p>
+    </div>
+</section>
+
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const $burger = document.querySelector('.navbar-burger');
+      const $menu = document.querySelector('#navMenu');
+      $burger.addEventListener('click', () => {
+        $burger.classList.toggle('is-active');
+        $menu.classList.toggle('is-active');
+      });
+    });
+  </script>
+</body>
+</html>
