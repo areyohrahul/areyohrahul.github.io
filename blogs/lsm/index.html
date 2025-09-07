@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Why Modern Databases Rely on LSM Trees</title>
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"></noscript>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){ dataLayer.push(arguments); }
+      gtag('js', new Date());
+
+      gtag('config', 'G-RP3XSZXCG2');
+    </script>
+    
+<link rel="stylesheet" href="/blogs/css/content.css" />
+
+</head>
+<body>
+
+<nav class="navbar is-transparent">
+    <div class="container">
+        <div class="navbar-brand">
+            <a class="navbar-item is-size-3 has-text-weight-bold" href="/">Rahul Arora</a>
+            <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false" data-target="navMenu">
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+            </a>
+        </div>
+        <div id="navMenu" class="navbar-menu">
+            <div class="navbar-end">
+                <a class="navbar-item is-size-5" href="/blogs/index.html">Blogs</a>
+                <a class="navbar-item is-size-5" href="/reads/index.html">Reads</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+
+<section class="section">
+    <div class="container content">
+        <h1 class="title is-3 mb-2">Why Modern Databases Rely on LSM Trees</h1>
+
+        
+        <div class="tags is-justify-content-start mb-0">
+            
+            <span class="tag has-background-light has-text-dark">database</span>
+            
+        </div>
+        
+
+        
+        <p class="has-text-grey is-size-6 mt-0 mb-4">6 min read</p>
+        
+
+        
+        
+            
+            <div class="notification is-link is-light mt-1 mb-5">
+                This blog is based on insights from the book <strong>Database internals</strong>. Explore more<a href="/books/database-internals/" class="has-text-link ml-1">here</a>
+            </div>
+            
+        
+
+        <p>When you think of databases, B-Trees often come to mind. But for modern, write-heavy workloads, B-Trees quickly run into limitations. That's where the Log-Structured Merge (LSM) engine comes in, a storage design that powers systems like RocksDB, Cassandra, HBase, and more.</p>
+<p>While each database has its own implementation details, the core mechanics of LSM engines remain the same. Understanding these not only demystifies how your database works under the hood but also helps you tune it for your workload.</p>
+<p>Let's unpack the internals step by step.</p>
+<hr />
+<h2>Core components of an LSM engine</h2>
+<p>An LSM engine is composed of a few core components that work together to balance speed and reliability:</p>
+<p><strong>Write-ahead log (WAL)</strong></p>
+<p>Every write first lands in the WAL, which is a sequential log on disk. This guarantees durability in case of crashes or restarts.</p>
+<p><strong>Memtable</strong></p>
+<p>An in-memory data structure (often a skip list) that holds recent writes. Because it's in memory, inserts, updates, and deletes are fast. When the memtable fills up, it's frozen and queued for flushing to disk.</p>
+<p><strong>SST files</strong></p>
+<p>Immutable, sorted files on disk known as <strong>Sorted String Tables (SSTs)</strong>. Each file covers a key range and stores data in sorted order. SSTs generally include sub-structures like:</p>
+<ul>
+<li><strong>Index blocks</strong> for fast key lookups</li>
+<li><strong>Filter blocks</strong> (often Bloom filters) to avoid unnecessary disk reads</li>
+</ul>
+<p><strong>Block cache</strong></p>
+<p>Frequently accessed SST blocks are cached in memory (commonly with an LRU cache) to speed up reads.</p>
+<hr />
+<p><strong>The write path</strong></p>
+<p>Writes are where LSM engines shine. Here's what happens step by step:</p>
+<ul>
+<li>A write (insert, update, or delete) is appended to the WAL. Deletes are stored as special markers called <strong>tombstones</strong>.</li>
+<li>The write is added to the active memtable. Both operations are fast: WAL writes are sequential (often buffered), and memtable updates happen in memory.</li>
+<li>Once the memtable reaches its capacity, it becomes immutable and is flushed to disk as an SST file. The corresponding WAL segment can then be discarded.</li>
+<li>Over time, overlapping SST files accumulate, containing redundant versions of the same keys or tombstones. This is where compaction (explained more in the next section) comes in.</li>
+</ul>
+<p>You can refer to the image given below to understand this flow better:</p>
+<p><img alt="" src="/blogs/lsm/1.png" /></p>
+<hr />
+<h2>Compaction: cleaning up the mess</h2>
+<p>Compaction is the LSM engine's form of garbage collection. It:</p>
+<ul>
+<li>Merges overlapping SST files</li>
+<li>Discards outdated versions of keys and deletes marked by tombstones</li>
+<li>Produces fresh SSTs with consolidated data</li>
+</ul>
+<p>While compaction itself is a huge topic, here are the two most common strategies:</p>
+<p><strong>Tiered compaction</strong></p>
+<p>Files of similar size are merged repeatedly into bigger ones. This reduces write overhead but may leave more files to check during reads. This kind of compaction strategy is used in HBase.</p>
+<p><strong>Leveled compaction</strong></p>
+<p>Data is organized into levels (L0, L1, L2, …), with each level having a fixed size. Within a level, each key range appears only once. This speeds up reads but increases write amplification. RocksDB uses this compaction strategy as a default.</p>
+<p>One important thing to remember is that compaction is crucial but comes at a cost: it consumes CPU, I/O, and temporary disk space. It also leads to the well-known <strong>write amplification</strong> problem.</p>
+<hr />
+<h2>The read path</h2>
+<p>In this section, we will see how reads function in an LSM engine.</p>
+<p>Reads follow a series of steps because data can live in multiple places:</p>
+<ul>
+<li>Memtables (active and immutable) are checked first, since they contain the most recent writes.</li>
+<li>If the key isn't in the memtables, the engine searches the SST files on disk, starting with the most recent ones. For each candidate SST, Bloom filters are used to quickly rule out files that definitely do not contain the key.</li>
+<li>Once a potential SST file is identified, the engine locates the corresponding data block by using the index blocks within the SST file. If the data block is already in the block cache, it can be returned immediately. Otherwise, it is read from disk and then cached for future access. The candidate data  block is then searched for the record. The SST file search continues until the record is found or there are no more SST files left.</li>
+</ul>
+<p>Because a read may involve consulting several components, it is generally slower than a write. This becomes even more noticeable during range scans, where multiple overlapping SST files might need to be read to cover the full input range.</p>
+<hr />
+<h2>Ending notes</h2>
+<p>LSM storage engines are among the most widely used designs in modern databases. Although implementations differ, the core principles remain the same: optimize for writes, manage data with compaction, and balance the trade-off between speed and efficiency.</p>
+<p>Grasping these fundamentals not only reveals what's happening under the hood but also equips you to tune and optimize any LSM-based database for your own workload.</p>
+<p>This article is just a starting point. The world of LSM engines is far richer than what can be covered here, with countless variations, optimizations, and trade-offs that shape how different systems perform. I encourage you to keep exploring.</p>
+<p>Thank you for reading.</p>
+<p>I regularly read a wide range of technical books and share my learnings <a href="/books">here</a>, whether it's database internals, system design, or just clever engineering ideas. Feel free to explore the rest of the blogs if that sounds interesting to you.</p>
+<p>Thank you for reading.</p>
+<p>Happy coding!</p>
+    </div>
+</section>
+
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const $burger = document.querySelector('.navbar-burger');
+      const $menu = document.querySelector('#navMenu');
+      $burger.addEventListener('click', () => {
+        $burger.classList.toggle('is-active');
+        $menu.classList.toggle('is-active');
+      });
+    });
+  </script>
+</body>
+</html>
