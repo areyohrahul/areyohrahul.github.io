@@ -107,7 +107,7 @@
 <li>16 → needs 5 bits</li>
 </ul>
 <p>Together, they take just 9 bits. Instead of wasting a whole 32-bit integer for each, Lucene packs them efficiently into a continuous bit array (within a single int).</p>
-<p>This technique is widely used beyond Lucene too. Roaring Bitmaps or Java’s Bitset are two very good examples of the same, which I’ve covered in earlier posts. Read these articles to get a better understanding of bit packing.</p>
+<p>This technique is widely used beyond Lucene too. <a href="/blogs/roaring-bitmap">Roaring Bitmaps</a> or <a href="/blogs/java-bit-set">Java’s Bitset</a> are two very good examples of the same, which I’ve covered in earlier posts. Read these articles to get a better understanding of bit packing.</p>
 <p>The entire process is described in the following diagram for a quick overview:</p>
 <p><img alt="" src="/blogs/lucene-postings-list-compression/6.png" /></p>
 <hr />
