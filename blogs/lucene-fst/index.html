@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lucene's Inverted Index Is Not What You Think It Is</title>
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"></noscript>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){ dataLayer.push(arguments); }
+      gtag('js', new Date());
+
+      gtag('config', 'G-RP3XSZXCG2');
+    </script>
+    
+<link rel="stylesheet" href="/blogs/css/content.css" />
+
+</head>
+<body>
+
+<nav class="navbar is-transparent">
+    <div class="container">
+        <div class="navbar-brand">
+            <a class="navbar-item is-size-3 has-text-weight-bold" href="/">Rahul Arora</a>
+            <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false" data-target="navMenu">
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+                <span aria-hidden="true"></span>
+            </a>
+        </div>
+        <div id="navMenu" class="navbar-menu">
+            <div class="navbar-end">
+                <a class="navbar-item is-size-5" href="/blogs/index.html">Blogs</a>
+                <a class="navbar-item is-size-5" href="/reads/index.html">Reads</a>
+            </div>
+        </div>
+    </div>
+</nav>
+
+
+<section class="section">
+    <div class="container content">
+        <h1 class="title is-3 mb-2">Lucene's Inverted Index Is Not What You Think It Is</h1>
+
+        
+        <div class="tags is-justify-content-start mb-0">
+            
+            <span class="tag has-background-light has-text-dark">lucene</span>
+            
+        </div>
+        
+
+        
+        <p class="has-text-grey is-size-6 mt-0 mb-4">4 min read</p>
+        
+
+        
+        
+            
+            <div class="notification is-link is-light mt-1 mb-5">
+                This blog is based on insights from the book <strong>Introduction To Information Retrieval</strong>. Explore more<a href="/books/introduction-to-information-retrieval/" class="has-text-link ml-1">here</a>
+            </div>
+            
+        
+
+        <p>When people first hear about an inverted index, they typically envision a straightforward map: terms as keys and document lists as values. That picture works fine at a high level, but it misses the real story.</p>
+<p>Lucene's inverted index is far more sophisticated. It's built to handle not only exact lookups but also range queries, wildcards, and fuzzy matches, all while staying fast at scale. The secret behind this efficiency is a data structure called a finite state transducer (FST).</p>
+<p>In this article, we'll unpack how Lucene goes beyond a "map" and how the FST plays a central role in making advanced queries possible.</p>
+<hr />
+<h2>What if the inverted index was just a map?</h2>
+<p>Let's start with a thought experiment. Suppose Lucene's inverted index really was just a plain map.</p>
+<ul>
+<li>For exact lookups like <code>"apple"</code> or <code>"banana"</code>, it would work fine.</li>
+<li>But what about a prefix query like <code>"hello*"</code>? Since the map isn't ordered, Lucene would need to scan every key to find matches which is far too slow for large indexes.</li>
+<li>Similarly, a range query such as <code>["apple", "banana"]</code> would require a full table scan, again impractical at scale.</li>
+</ul>
+<p>In short, a simple map would fall apart in real-world search workloads. Lucene needs something better.</p>
+<hr />
+<h2>Enter finite state transducers (FSTs)</h2>
+<p>Lucene addresses this problem with FSTs, which can be thought of as a prefix-compressed trie with additional metadata. Refer to the image given below to get a high-level idea of how it looks.</p>
+<p><img alt="" src="/blogs/lucene-fst/1.png" /></p>
+<p>Here's how it works in practice:</p>
+<p><strong>Terms dictionary (.tim)</strong></p>
+<p>Stores all terms in a sorted, block-wise fashion. Each entry points to its postings list (the actual document references).</p>
+<p><strong>Term index (.tip)</strong></p>
+<p>An FST is built for each field. It maps prefixes to blocks in the terms dictionary.</p>
+<p><strong>Metadata (.tmd)</strong></p>
+<p>Stores term statistics (like frequency, min term, max term) and, importantly, pointers to the FSTs.</p>
+<p>When Lucene searches for a term, it jumps into the correct part of the FST using the metadata file, finds the right block in the terms dictionary, and then retrieves postings from there.</p>
+<p>Because these structures are compressed, Lucene can memory-map them efficiently, keeping searches fast even for huge indexes.</p>
+<hr />
+<h2>Why FSTs matter for queries</h2>
+<p><strong>Exact term queries</strong></p>
+<p>A lookup like <code>"apple"</code> is straightforward. The FST quickly points to the right block, and Lucene retrieves the postings.</p>
+<p><strong>Range queries</strong></p>
+<p>For queries like <code>["apple", "banana"]</code>, Lucene uses the fact that terms are stored in sorted order. It finds the start term via the FST, then scans forward in the dictionary until the end term.</p>
+<p><strong>Fuzzy queries</strong></p>
+<p>A fuzzy query such as <code>"cat~1"</code> (terms within one edit distance of "cat") is more complex. Lucene builds an automaton representing valid edits, then intersects it with the FST to find matching terms efficiently.
+(Note: Many readers confuse this with brute-force scanning. The automaton+FST approach is why Lucene's fuzzy queries are orders of magnitude faster than naïve implementations. Read more about it here)</p>
+<p><strong>Wildcard queries</strong></p>
+<p>Prefix wildcards like <code>"hello*"</code> are handled naturally by traversing the FST from the <code>"hello"</code> node and enumerating all downstream terms.</p>
+<p>However, leading wildcards such as <code>"*hello"</code> are problematic. Since FSTs are prefix-based, Lucene cannot optimize these, and they may require scanning large parts of the terms dictionary.</p>
+<hr />
+<h2>Ending notes</h2>
+<p>In this blog, we read about the internals of Lucene's inverted index that are often misunderstood in theory.</p>
+<p>Knowing internals could help us optimize our workloads too.</p>
+<p>I hope you learned something new today.</p>
+<p>Don't forget to follow me for more deep dives like this.</p>
+<p>References:
+<a href="https://blog.mikemccandless.com/2010/12/using-finite-state-transducers-in.html">https://blog.mikemccandless.com/2010/12/using-finite-state-transducers-in.html</a><br />
+<a href="https://blog.mikemccandless.com/2011/01/finite-state-transducers-part-2.html">https://blog.mikemccandless.com/2011/01/finite-state-transducers-part-2.html</a><br />
+<a href="https://blog.mikemccandless.com/2013/06/build-your-own-finite-state-transducer.html">https://blog.mikemccandless.com/2013/06/build-your-own-finite-state-transducer.html</a><br />
+<a href="https://blog.mikemccandless.com/2013/09/lucene-now-has-in-memory-terms.html">https://blog.mikemccandless.com/2013/09/lucene-now-has-in-memory-terms.html</a><br />
+<a href="https://blog.mikemccandless.com/2011/03/lucenes-fuzzyquery-is-100-times-faster.html">https://blog.mikemccandless.com/2011/03/lucenes-fuzzyquery-is-100-times-faster.html</a><br /></p>
+    </div>
+</section>
+
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const $burger = document.querySelector('.navbar-burger');
+      const $menu = document.querySelector('#navMenu');
+      $burger.addEventListener('click', () => {
+        $burger.classList.toggle('is-active');
+        $menu.classList.toggle('is-active');
+      });
+    });
+  </script>
+</body>
+</html>
